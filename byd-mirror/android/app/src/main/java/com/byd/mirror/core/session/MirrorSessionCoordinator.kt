@@ -232,7 +232,9 @@ object MirrorSessionCoordinator {
                 _telemetry.value = _telemetry.value.copy(rttMs = rtt)
             },
             onTouchEvent = { xNorm, yNorm, action ->
-                com.byd.mirror.service.BydTouchAccessibilityService.dispatchNormalizedTouch(xNorm, yNorm, action)
+                if (com.byd.mirror.BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+                    com.byd.mirror.service.BydTouchAccessibilityService.dispatchNormalizedTouch(xNorm, yNorm, action)
+                }
             },
             onUnexpectedDisconnect = {
                 handleUnexpectedDrop()

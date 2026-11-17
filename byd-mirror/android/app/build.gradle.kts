@@ -37,6 +37,19 @@ android {
         }
     }
 
+    flavorDimensions += "mode"
+    productFlavors {
+        create("standard") {
+            dimension = "mode"
+            buildConfigField("boolean", "ENABLE_OVERLAY_AND_TOUCH", "false")
+        }
+        create("fullTouch") {
+            dimension = "mode"
+            applicationIdSuffix = ".touch"
+            buildConfigField("boolean", "ENABLE_OVERLAY_AND_TOUCH", "true")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,6 +61,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

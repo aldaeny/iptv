@@ -42,7 +42,7 @@ jobs:
         working-directory: byd-mirror/android
         run: |
           set -o pipefail
-          if ! gradle testDebugUnitTest assembleRelease 2>&1 | tee gradle.log; then
+          if ! gradle testStandardDebugUnitTest assembleStandardRelease assembleFullTouchRelease 2>&1 | tee gradle.log; then
             grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle.log | head -n 30 | while IFS= read -r line; do
               echo "::error::$line"
             done
@@ -52,7 +52,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: byd-phone-release-apk
-          path: byd-mirror/android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            byd-mirror/android/app/build/outputs/apk/standard/release/app-standard-release.apk
+            byd-mirror/android/app/build/outputs/apk/fullTouch/release/app-fullTouch-release.apk
 
   build-byd-receiver:
     runs-on: ubuntu-latest
@@ -160,8 +162,15 @@ jobs:
       - name: Prepare direct APK & IPA files
         run: |
           mkdir -p release-assets
-          if [ -f downloaded-artifacts/byd-phone-release-apk/app-release.apk ]; then
-            cp downloaded-artifacts/byd-phone-release-apk/app-release.apk release-assets/BydMirror-Phone.apk
+          if [ -f downloaded-artifacts/byd-phone-release-apk/standard/release/app-standard-release.apk ]; then
+            cp downloaded-artifacts/byd-phone-release-apk/standard/release/app-standard-release.apk release-assets/BydMirror-Phone.apk
+          elif [ -f downloaded-artifacts/byd-phone-release-apk/app-standard-release.apk ]; then
+            cp downloaded-artifacts/byd-phone-release-apk/app-standard-release.apk release-assets/BydMirror-Phone.apk
+          fi
+          if [ -f downloaded-artifacts/byd-phone-release-apk/fullTouch/release/app-fullTouch-release.apk ]; then
+            cp downloaded-artifacts/byd-phone-release-apk/fullTouch/release/app-fullTouch-release.apk release-assets/BydMirror-Phone-ReverseTouch.apk
+          elif [ -f downloaded-artifacts/byd-phone-release-apk/app-fullTouch-release.apk ]; then
+            cp downloaded-artifacts/byd-phone-release-apk/app-fullTouch-release.apk release-assets/BydMirror-Phone-ReverseTouch.apk
           fi
           if [ -f downloaded-artifacts/byd-dilink-receiver-release-apk/app-release.apk ]; then
             cp downloaded-artifacts/byd-dilink-receiver-release-apk/app-release.apk release-assets/BydMirror-DiLink-Receiver.apk

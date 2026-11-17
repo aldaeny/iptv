@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.byd.mirror.BuildConfig
 import com.byd.mirror.core.model.BydDevice
 import com.byd.mirror.core.model.ConnectionState
 import com.byd.mirror.core.model.DisplayOrientation
@@ -322,15 +323,17 @@ fun MirrorDashboardScreen(
                             )
                         }
 
-                        OutlinedButton(
-                            onClick = onLaunchOverlay,
-                            border = BorderStroke(1.dp, BydColors.BorderSubtle),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = if (isArabic) "لوحة التحكم العائمة" else "Floating Panel",
-                                color = BydColors.TextPrimary
-                            )
+                        if (BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+                            OutlinedButton(
+                                onClick = onLaunchOverlay,
+                                border = BorderStroke(1.dp, BydColors.BorderSubtle),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = if (isArabic) "لوحة التحكم العائمة" else "Floating Panel",
+                                    color = BydColors.TextPrimary
+                                )
+                            }
                         }
                     }
                 }

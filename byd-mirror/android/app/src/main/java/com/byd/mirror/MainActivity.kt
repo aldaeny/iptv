@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(MirrorForegroundService.EXTRA_RESULT_DATA, result.data)
             }
             startForegroundService(serviceIntent)
-            if (Settings.canDrawOverlays(this)) {
+            if (BuildConfig.ENABLE_OVERLAY_AND_TOUCH && Settings.canDrawOverlays(this)) {
                 startService(Intent(this, MirrorOverlayService::class.java))
             }
         }
@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchFloatingOverlay() {
+        if (!BuildConfig.ENABLE_OVERLAY_AND_TOUCH) return
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,

@@ -12,6 +12,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.byd.mirror.BuildConfig
 import com.byd.mirror.MainActivity
 import com.byd.mirror.R
 import com.byd.mirror.core.session.MirrorSessionCoordinator
@@ -96,7 +97,9 @@ class MirrorForegroundService : Service() {
             vEncoder.reconfigure(profile, orientation, densityDpi)
         }
         MirrorSessionCoordinator.onStopServices = {
-            stopService(Intent(this, MirrorOverlayService::class.java))
+            if (BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+                runCatching { stopService(Intent(this, MirrorOverlayService::class.java)) }
+            }
             stopSelf()
         }
 
@@ -140,11 +143,22 @@ class MirrorForegroundService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, MirrorForegroundService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle(getString(R.string.overlay_notification_title))
             .setContentText(getString(R.string.overlay_notification_body))
             .setContentIntent(openIntent)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "إيقاف البث / Stop",
+                stopIntent
+            )
             .setOngoing(true)
             .build()
     }
