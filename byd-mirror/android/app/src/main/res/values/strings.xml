@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">BYD Wireless Mirror</string>
+    <string name="one_tap_connect">One-Tap Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="auto_connect_label">Auto-Connect in BYD Wi-Fi Range</string>
+    <string name="overlay_notification_title">BYD Mirroring Active</string>
+    <string name="overlay_notification_body">Wireless display stream encrypted with AES-256-GCM</string>
+    <string name="accessibility_touch_desc">Allows touching the BYD car screen to control your phone remotely</string>
+</resources>

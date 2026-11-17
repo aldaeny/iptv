@@ -1,0 +1,59 @@
+name: BydWirelessMirror
+options:
+  bundleIdPrefix: com.byd.mirror
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  BydWirelessMirror:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Info.plist
+    entitlements:
+      path: BydMirror.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.byd.mirror.app
+        SWIFT_VERSION: "5.10"
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: BydMirror.entitlements
+    dependencies:
+      - target: BydBroadcastExtension
+      - target: BydLiveActivityExtension
+
+  BydBroadcastExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BroadcastExtension
+      - path: Sources/Core
+    info:
+      path: BroadcastExtension/Info.plist
+    entitlements:
+      path: BydMirror.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.byd.mirror.app.broadcast
+        SWIFT_VERSION: "5.10"
+        INFOPLIST_FILE: BroadcastExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BydMirror.entitlements
+
+  BydLiveActivityExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WidgetExtension
+      - path: Sources/Core
+    info:
+      path: WidgetExtension/Info.plist
+    entitlements:
+      path: BydMirror.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.byd.mirror.app.liveactivity
+        SWIFT_VERSION: "5.10"
+        INFOPLIST_FILE: WidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BydMirror.entitlements
