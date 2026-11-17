@@ -119,11 +119,33 @@ jobs:
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/BydWirelessMirror.app Payload/
           zip -qry BydWirelessMirror-unsigned.ipa Payload
+          rm -rf Payload build
+
+          xcodegen generate --spec Project-free.yml
+          if ! xcodebuild -project BydWirelessMirrorFree.xcodeproj \
+            -scheme BydWirelessMirror \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-free \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee xcodebuild-free.log; then
+            grep -E "(error:|fatal error:|BUILD FAILED)" xcodebuild-free.log | head -n 25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R build-free/Build/Products/Release-iphoneos/BydWirelessMirror.app Payload/
+          zip -qry BydWirelessMirror-FreeSideload.ipa Payload
       - name: Upload unsigned iOS IPA
         uses: actions/upload-artifact@v4
         with:
           name: byd-ios-unsigned-ipa
-          path: byd-mirror/ios/BydWirelessMirror-unsigned.ipa
+          path: |
+            byd-mirror/ios/BydWirelessMirror-unsigned.ipa
+            byd-mirror/ios/BydWirelessMirror-FreeSideload.ipa
 
   publish-release:
     runs-on: ubuntu-latest
@@ -146,6 +168,9 @@ jobs:
           fi
           if [ -f downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa ]; then
             cp downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa release-assets/BydWirelessMirror-unsigned.ipa
+          fi
+          if [ -f downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-FreeSideload.ipa ]; then
+            cp downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-FreeSideload.ipa release-assets/BydWirelessMirror-FreeSideload.ipa
           fi
           ls -lh release-assets
 

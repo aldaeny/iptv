@@ -1,0 +1,22 @@
+name: BydWirelessMirrorFree
+options:
+  bundleIdPrefix: com.byd.mirror
+  deploymentTarget:
+    iOS: "16.2"
+
+targets:
+  BydWirelessMirror:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Info.plist
+    entitlements:
+      path: BydMirror-free.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.byd.mirror.app
+        SWIFT_VERSION: "5.10"
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: BydMirror-free.entitlements

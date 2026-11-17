@@ -207,10 +207,22 @@ public struct MirrorDashboardView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
-                ReplayKitBroadcastButton(bundleIdentifier: "com.byd.mirror.app.broadcast")
-                    .frame(width: 52, height: 44)
-                    .background(BydColors.surfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                if viewModel.hasBroadcastExtension {
+                    ReplayKitBroadcastButton(bundleIdentifier: "com.byd.mirror.app.broadcast")
+                        .frame(width: 52, height: 44)
+                        .background(BydColors.surfaceElevated)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
+
+            if !viewModel.hasBroadcastExtension {
+                Text(
+                    viewModel.isArabic
+                        ? "وضع التثبيت المجاني ($0) • بث مباشر بدون شهادة مطور مدفوعة"
+                        : "Free Sideload Mode ($0) • Direct Capture Active"
+                )
+                .font(.caption2)
+                .foregroundColor(BydColors.evEmerald)
             }
         }
         .padding(22)

@@ -25,12 +25,23 @@ public final class MirrorViewModel: ObservableObject {
     @Published public private(set) var selectedProfileId: String = "auto"
     @Published public var manualIpInput: String = ""
 
+    public let hasBroadcastExtension: Bool = {
+        guard let pluginsUrl = Bundle.main.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(atPath: pluginsUrl.path) else {
+            return false
+        }
+        return items.contains { $0.hasSuffix(".appex") }
+    }()
+
     private let discovery = BonjourP2PDiscovery()
     private let autoConnect = AutoConnectCoordinator()
     private let thermalMonitor = ThermalPowerMonitor()
     private let qualityNegotiator = QualityNegotiator()
     private let sharedStore = SharedSessionStore()
-    private let trustedStore = KeychainTrustedVehiclesStore(accessGroup: SharedSessionStore.appGroupId)
+    private let directSession = DirectMirrorSession()
+    private lazy var trustedStore = KeychainTrustedVehiclesStore(
+        accessGroup: hasBroadcastExtension ? SharedSessionStore.appGroupId : nil
+    )
     #if canImport(UserNotifications)
     private let autoConnectNotifier = AutoConnectNotificationHelper()
     #endif
@@ -86,8 +97,54 @@ public final class MirrorViewModel: ObservableObject {
         autoConnectNotifier.requestPermission()
         #endif
         registerExtensionObservers()
+        wireDirectSessionCallbacks()
         autoConnect.startMonitoring()
         thermalMonitor.startMonitoring()
+    }
+
+    private func wireDirectSessionCallbacks() {
+        directSession.onPairingVerification = { [weak self] device, pin, fp in
+            Task { @MainActor in
+                self?.pendingPairing = PairingPrompt(id: device.id, device: device, pin: pin, fingerprint: fp)
+            }
+        }
+        directSession.onStreamingStarted = { [weak self] device, profile, fp in
+            Task { @MainActor in
+                guard let self else { return }
+                self.connectionState = .streaming(
+                    device: device,
+                    profile: profile,
+                    orientation: self.orientation,
+                    fingerprint: fp
+                )
+                self.showMiniOverlay = true
+            }
+        }
+        directSession.onTelemetry = { [weak self] fps, rttMs, lossPct, bitrateMbps in
+            Task { @MainActor in
+                self?.telemetry.actualFps = fps
+                self?.telemetry.rttMs = rttMs
+                self?.telemetry.packetLossPercent = lossPct
+                self?.telemetry.currentBitrateMbps = bitrateMbps
+            }
+        }
+        directSession.onReconnecting = { [weak self] device, attempt in
+            Task { @MainActor in
+                self?.connectionState = .reconnecting(device: device, attempt: attempt)
+            }
+        }
+        directSession.onDisconnected = { [weak self] errorMsg in
+            Task { @MainActor in
+                guard let self else { return }
+                self.showMiniOverlay = false
+                self.pendingPairing = nil
+                if let errorMsg {
+                    self.connectionState = .error(errorMsg)
+                } else {
+                    self.connectionState = .idle
+                }
+            }
+        }
     }
 
     public func onOneTapConnect() {
@@ -103,14 +160,35 @@ public final class MirrorViewModel: ObservableObject {
         }
     }
 
-    /// Saves the chosen BYD screen to App Group SharedSessionStore so ReplayKit's SampleHandler
-    /// owns the single live TCP/UDP session without socket conflict.
+    /// Saves the chosen BYD screen to App Group SharedSessionStore for BroadcastExtension,
+    /// or starts DirectMirrorSession automatically when running in Free-Sideload ($0) mode.
     public func prepareConnection(to device: BydDevice) {
         selectedDevice = device
         sharedStore.saveTargetDevice(device)
         sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: selectedProfileId)
         activeProfile = resolvedProfile(for: device)
         connectionState = .handshaking(device)
+        if !hasBroadcastExtension {
+            directSession.start(
+                device: device,
+                profile: activeProfile,
+                orientation: orientation,
+                trusted: isTrusted(deviceId: device.id)
+            )
+        }
+    }
+
+    public func startDirectInAppMirror() {
+        guard let device = selectedDevice ?? discoveredDevices.first else { return }
+        selectedDevice = device
+        activeProfile = resolvedProfile(for: device)
+        connectionState = .handshaking(device)
+        directSession.start(
+            device: device,
+            profile: activeProfile,
+            orientation: orientation,
+            trusted: isTrusted(deviceId: device.id)
+        )
     }
 
     public func connectManualIp() {
@@ -135,12 +213,14 @@ public final class MirrorViewModel: ObservableObject {
         self.preferHevc = preferHevc
         sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: selectedProfileId)
         activeProfile = resolvedProfile(for: selectedDevice)
+        directSession.updateProfile(activeProfile)
     }
 
     public func selectProfile(id: String) {
         selectedProfileId = id
         sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: id)
         activeProfile = resolvedProfile(for: selectedDevice)
+        directSession.updateProfile(activeProfile)
     }
 
     public func toggleLanguage() {
@@ -181,6 +261,7 @@ public final class MirrorViewModel: ObservableObject {
             )
         )
         sharedStore.confirmPairingAndNotify(deviceId: prompt.device.id)
+        directSession.confirmPairingAndStartStream()
         trustedVehicles = trustedStore.loadAll()
         pendingPairing = nil
     }
@@ -202,6 +283,7 @@ public final class MirrorViewModel: ObservableObject {
     public func toggleOrientation() {
         orientation = (orientation == .landscape) ? .portrait : .landscape
         sharedStore.saveOrientation(orientation)
+        directSession.updateOrientation(orientation)
         #if canImport(ActivityKit) && !os(macOS)
         if #available(iOS 16.1, *), let mgr = liveActivityManager as? LiveActivityManager {
             mgr.update(orientation: orientation, fps: activeProfile.targetFps)
@@ -213,6 +295,7 @@ public final class MirrorViewModel: ObservableObject {
     }
 
     public func disconnect() {
+        directSession.stop(notify: false)
         sharedStore.requestStopBroadcast()
         #if canImport(ActivityKit) && !os(macOS)
         if #available(iOS 16.1, *), let mgr = liveActivityManager as? LiveActivityManager {
