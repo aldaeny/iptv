@@ -42,7 +42,7 @@ jobs:
         working-directory: byd-mirror/android
         run: |
           set -o pipefail
-          if ! gradle testDebugUnitTest assembleDebug 2>&1 | tee gradle.log; then
+          if ! gradle testDebugUnitTest assembleRelease 2>&1 | tee gradle.log; then
             grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle.log | head -n 30 | while IFS= read -r line; do
               echo "::error::$line"
             done
@@ -51,8 +51,8 @@ jobs:
       - name: Upload Phone APK
         uses: actions/upload-artifact@v4
         with:
-          name: byd-phone-debug-apk
-          path: byd-mirror/android/app/build/outputs/apk/debug/app-debug.apk
+          name: byd-phone-release-apk
+          path: byd-mirror/android/app/build/outputs/apk/release/app-release.apk
 
   build-byd-receiver:
     runs-on: ubuntu-latest
@@ -76,7 +76,7 @@ jobs:
         working-directory: byd-mirror/receiver-dilink
         run: |
           set -o pipefail
-          if ! gradle testDebugUnitTest assembleDebug 2>&1 | tee gradle.log; then
+          if ! gradle testDebugUnitTest assembleRelease 2>&1 | tee gradle.log; then
             grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle.log | head -n 30 | while IFS= read -r line; do
               echo "::error::$line"
             done
@@ -85,8 +85,8 @@ jobs:
       - name: Upload Receiver APK
         uses: actions/upload-artifact@v4
         with:
-          name: byd-dilink-receiver-debug-apk
-          path: byd-mirror/receiver-dilink/app/build/outputs/apk/debug/app-debug.apk
+          name: byd-dilink-receiver-release-apk
+          path: byd-mirror/receiver-dilink/app/build/outputs/apk/release/app-release.apk
 
   build-ios-check:
     runs-on: macos-latest
@@ -160,11 +160,11 @@ jobs:
       - name: Prepare direct APK & IPA files
         run: |
           mkdir -p release-assets
-          if [ -f downloaded-artifacts/byd-phone-debug-apk/app-debug.apk ]; then
-            cp downloaded-artifacts/byd-phone-debug-apk/app-debug.apk release-assets/BydMirror-Phone-debug.apk
+          if [ -f downloaded-artifacts/byd-phone-release-apk/app-release.apk ]; then
+            cp downloaded-artifacts/byd-phone-release-apk/app-release.apk release-assets/BydMirror-Phone.apk
           fi
-          if [ -f downloaded-artifacts/byd-dilink-receiver-debug-apk/app-debug.apk ]; then
-            cp downloaded-artifacts/byd-dilink-receiver-debug-apk/app-debug.apk release-assets/BydMirror-DiLink-Receiver-debug.apk
+          if [ -f downloaded-artifacts/byd-dilink-receiver-release-apk/app-release.apk ]; then
+            cp downloaded-artifacts/byd-dilink-receiver-release-apk/app-release.apk release-assets/BydMirror-DiLink-Receiver.apk
           fi
           if [ -f downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa ]; then
             cp downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa release-assets/BydWirelessMirror-unsigned.ipa
