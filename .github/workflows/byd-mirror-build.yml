@@ -10,7 +10,7 @@ on:
       - ".github/workflows/byd-mirror-build.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify-protocol:
@@ -110,3 +110,42 @@ jobs:
         with:
           name: byd-ios-unsigned-ipa
           path: byd-mirror/ios/BydWirelessMirror-unsigned.ipa
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [build-android-phone, build-byd-receiver, build-ios-check]
+    if: always() && (needs.build-android-phone.result == 'success' || needs.build-byd-receiver.result == 'success' || needs.build-ios-check.result == 'success')
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Prepare direct APK & IPA files
+        run: |
+          mkdir -p release-assets
+          if [ -f downloaded-artifacts/byd-phone-debug-apk/app-debug.apk ]; then
+            cp downloaded-artifacts/byd-phone-debug-apk/app-debug.apk release-assets/BydMirror-Phone-debug.apk
+          fi
+          if [ -f downloaded-artifacts/byd-dilink-receiver-debug-apk/app-debug.apk ]; then
+            cp downloaded-artifacts/byd-dilink-receiver-debug-apk/app-debug.apk release-assets/BydMirror-DiLink-Receiver-debug.apk
+          fi
+          if [ -f downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa ]; then
+            cp downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-unsigned.ipa release-assets/BydWirelessMirror-unsigned.ipa
+          fi
+          ls -lh release-assets
+
+      - name: Publish GitHub Pre-release with direct downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(ls -A release-assets)" ]; then
+            echo "No release assets to publish"
+            exit 1
+          fi
+          gh release delete byd-mirror-latest --yes --cleanup-tag >/dev/null 2>&1 || true
+          gh release create byd-mirror-latest release-assets/* \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "BYD Wireless Mirror (Latest Build)" \
+            --notes "Direct APK & IPA downloads (no ZIP wrapper) built from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`)."
