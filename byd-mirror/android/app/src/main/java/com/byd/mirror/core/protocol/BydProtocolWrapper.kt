@@ -143,10 +143,12 @@ class BydProtocolWrapper(
         onKeyframeRequested: () -> Unit,
         onQosReport: (fps: Int, droppedPackets: Int) -> Unit,
         onHeartbeatRtt: (rttMs: Int) -> Unit,
-        onTouchEvent: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> }
+        onTouchEvent: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> },
+        onUnexpectedDisconnect: () -> Unit = {}
     ) {
         controlReaderJob?.cancel()
         controlReaderJob = scope.launch(Dispatchers.IO) {
+            var gracefulStop = false
             while (isActive && controlSocket?.isClosed == false) {
                 val packet = runCatching { readFrame(decrypt = encryptionActive) }.getOrNull() ?: break
                 when (packet.opcode) {
@@ -173,9 +175,15 @@ class BydProtocolWrapper(
                             onTouchEvent(xNorm, yNorm, action)
                         }
                     }
-                    ProtocolOpcode.SESSION_STOP -> break
+                    ProtocolOpcode.SESSION_STOP -> {
+                        gracefulStop = true
+                        break
+                    }
                     else -> Unit
                 }
+            }
+            if (!gracefulStop && isActive) {
+                onUnexpectedDisconnect()
             }
         }
     }

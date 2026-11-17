@@ -2,10 +2,11 @@ import Foundation
 import ReplayKit
 
 /// ReplayKit Broadcast Upload Extension (single live TCP/UDP owner):
-/// - Reads target BYD endpoint & orientation from SharedSessionStore (App Group)
+/// - Reads target BYD endpoint, codec, profile & orientation from SharedSessionStore (App Group)
 /// - Completes full ECDH P-256 + AES-256-GCM handshake over TCP 47810
 /// - Gates SESSION_START behind PIN confirmation for untrusted vehicles
 /// - Streams Annex-B VideoToolbox H.265/H.264 (MTU-fragmented) & AudioToolbox AAC-LC over UDP 47811
+/// - Publishes live RTT/FPS/loss telemetry & auto-reconnects on transient Wi-Fi drops
 final class SampleHandler: RPBroadcastSampleHandler {
 
     private let protocolWrapper = BydProtocolWrapper()
@@ -14,21 +15,37 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private let trustedStore = KeychainTrustedVehiclesStore(accessGroup: SharedSessionStore.appGroupId)
     private var videoEncoder: HardwareVideoEncoder?
     private var audioEncoder: AudioAacEncoder?
+    private var pingTimer: DispatchSourceTimer?
     private var targetDeviceId: String = "byd-default"
+    private var targetHost: String = "192.168.49.1"
+    private var targetControlPort: UInt16 = 47810
+    private var targetMediaPort: UInt16 = 47811
+    private var activeProfile: DisplayProfile = .diLink15_6FHD
     private var handshakeComplete = false
     private var capabilitiesReady = false
+    private var userStopped = false
+    private var reconnectAttempts = 0
+    private var lastRttMs = 0
+    private var lastFps = 60
+    private var lastLossPct = 0.0
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
+        userStopped = false
+        reconnectAttempts = 0
+
         let saved = sharedStore.loadTargetEndpoint()
         targetDeviceId = saved.id
-        let host = (setupInfo?["bydHost"] as? String) ?? saved.host
-        let controlPort = (setupInfo?["bydPort"] as? NSNumber)?.uint16Value ?? saved.controlPort
-        let mediaPort = (setupInfo?["bydMediaPort"] as? NSNumber)?.uint16Value ?? saved.mediaPort
+        targetHost = (setupInfo?["bydHost"] as? String) ?? saved.host
+        targetControlPort = (setupInfo?["bydPort"] as? NSNumber)?.uint16Value ?? saved.controlPort
+        targetMediaPort = (setupInfo?["bydMediaPort"] as? NSNumber)?.uint16Value ?? saved.mediaPort
+
         let orientation = sharedStore.loadOrientation()
+        let streamSettings = sharedStore.loadStreamSettings()
+        activeProfile = resolveProfile(profileId: streamSettings.profileId, preferHevc: streamSettings.preferHevc)
 
         registerDarwinObservers()
 
-        videoEncoder = HardwareVideoEncoder(isHevc: true) { [weak self] annexBData, ptsUs in
+        videoEncoder = HardwareVideoEncoder(isHevc: streamSettings.preferHevc) { [weak self] annexBData, ptsUs in
             guard let self, self.handshakeComplete else { return }
             if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
                 annexBNalu: annexBData,
@@ -53,20 +70,68 @@ final class SampleHandler: RPBroadcastSampleHandler {
             }
         }
 
-        try? videoEncoder?.configure(profile: .diLink15_6FHD, orientation: orientation)
+        try? videoEncoder?.configure(profile: activeProfile, orientation: orientation)
+        connectTransport()
+    }
 
+    private func resolveProfile(profileId: String, preferHevc: Bool) -> DisplayProfile {
+        let base: DisplayProfile
+        switch profileId {
+        case DisplayProfile.diLink10_1HD.id:
+            base = .diLink10_1HD
+        case DisplayProfile.diLink12_8FHD.id:
+            base = .diLink12_8FHD
+        default:
+            base = .diLink15_6FHD
+        }
+        return DisplayProfile(
+            id: base.id,
+            label: base.label,
+            baseWidth: base.baseWidth,
+            baseHeight: base.baseHeight,
+            targetFps: base.targetFps,
+            bitrateMbps: base.bitrateMbps,
+            codec: preferHevc ? .h265 : .h264
+        )
+    }
+
+    private func connectTransport() {
         transport.connect(
-            host: host,
-            controlPort: controlPort,
-            mediaPort: mediaPort,
+            host: targetHost,
+            controlPort: targetControlPort,
+            mediaPort: targetMediaPort,
             onReady: { [weak self] in
+                self?.reconnectAttempts = 0
                 self?.startHandshakeSequence()
             },
             onFailed: { [weak self] error in
-                self?.sharedStore.setBroadcastState(active: false, error: error.localizedDescription)
-                self?.finishBroadcastWithError(error)
+                self?.handleTransportFailure(error)
             }
         )
+    }
+
+    private func handleTransportFailure(_ error: Error) {
+        if userStopped {
+            return
+        }
+        let canAutoReconnect = trustedStore.isTrusted(deviceId: targetDeviceId) || sharedStore.isDeviceTrustedInGroup(targetDeviceId)
+        if canAutoReconnect && reconnectAttempts < 3 {
+            reconnectAttempts += 1
+            handshakeComplete = false
+            capabilitiesReady = false
+            pingTimer?.cancel()
+            pingTimer = nil
+            transport.disconnect()
+            protocolWrapper.reset()
+            let delaySec = Double(reconnectAttempts) * 1.5
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delaySec) { [weak self] in
+                guard let self, !self.userStopped else { return }
+                self.connectTransport()
+            }
+            return
+        }
+        sharedStore.setBroadcastState(active: false, error: error.localizedDescription)
+        finishBroadcastWithError(error)
     }
 
     private func startHandshakeSequence() {
@@ -101,7 +166,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
         case .keyExchangeResp:
             if let fingerprint = try? protocolWrapper.completeKeyExchange(responsePayload: packet.payload) {
                 sharedStore.savePairingVerification(pin: protocolWrapper.pairingPin, fingerprint: fingerprint)
-                let capPayload = Data("dilink_15_6_fhd|1920x1080@60".utf8)
+                let capPayload = Data("\(activeProfile.id)|\(activeProfile.baseWidth)x\(activeProfile.baseHeight)@\(activeProfile.targetFps)".utf8)
                 if let capReq = try? protocolWrapper.encodeFrame(
                     opcode: .capabilitiesReq,
                     rawPayload: capPayload,
@@ -120,7 +185,33 @@ final class SampleHandler: RPBroadcastSampleHandler {
         case .keyframeRequest:
             videoEncoder?.requestKeyFrame()
 
+        case .heartbeatPong:
+            if packet.payload.count >= 8 {
+                var sentNsBE: UInt64 = 0
+                _ = withUnsafeMutableBytes(of: &sentNsBE) { packet.payload.prefix(8).copyBytes(to: $0) }
+                let sentNs = UInt64(bigEndian: sentNsBE)
+                let nowNs = DispatchTime.now().uptimeNanoseconds
+                if nowNs >= sentNs {
+                    lastRttMs = max(1, Int((nowNs - sentNs) / 1_000_000))
+                    publishTelemetry()
+                }
+            }
+
+        case .qosTelemetry:
+            if packet.payload.count >= 8 {
+                var fpsBE: Int32 = 0
+                var droppedBE: Int32 = 0
+                _ = withUnsafeMutableBytes(of: &fpsBE) { packet.payload.subdata(in: 0..<4).copyBytes(to: $0) }
+                _ = withUnsafeMutableBytes(of: &droppedBE) { packet.payload.subdata(in: 4..<8).copyBytes(to: $0) }
+                let fps = max(0, Int(Int32(bigEndian: fpsBE)))
+                let dropped = max(0, Int(Int32(bigEndian: droppedBE)))
+                lastFps = fps
+                lastLossPct = (fps + dropped > 0) ? (Double(dropped) * 100.0 / Double(fps + dropped)) : 0.0
+                publishTelemetry()
+            }
+
         case .sessionStop:
+            userStopped = true
             finishBroadcastWithError(NSError(domain: "com.byd.mirror", code: 0))
 
         default:
@@ -128,17 +219,48 @@ final class SampleHandler: RPBroadcastSampleHandler {
         }
     }
 
+    private func publishTelemetry() {
+        sharedStore.saveTelemetry(
+            fps: lastFps,
+            rttMs: lastRttMs,
+            packetLossPercent: lastLossPct,
+            bitrateMbps: Double(activeProfile.bitrateMbps)
+        )
+    }
+
     private func activateMediaSession() {
         guard capabilitiesReady, !handshakeComplete else { return }
+        let mime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
         if let startFrame = try? protocolWrapper.encodeFrame(
             opcode: .sessionStart,
-            rawPayload: Data("video/hevc".utf8),
+            rawPayload: Data(mime.utf8),
             encrypt: true
         ) {
             transport.sendControl(startFrame)
             handshakeComplete = true
             sharedStore.setBroadcastState(active: true, error: nil)
+            startHeartbeatLoop()
         }
+    }
+
+    private func startHeartbeatLoop() {
+        pingTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 1.5, repeating: 2.0)
+        timer.setEventHandler { [weak self] in
+            guard let self, self.handshakeComplete else { return }
+            var nowBE = DispatchTime.now().uptimeNanoseconds.bigEndian
+            let payload = Data(bytes: &nowBE, count: 8)
+            if let pingFrame = try? self.protocolWrapper.encodeFrame(
+                opcode: .heartbeatPing,
+                rawPayload: payload,
+                encrypt: self.protocolWrapper.isEncrypted
+            ) {
+                self.transport.sendControl(pingFrame)
+            }
+        }
+        timer.resume()
+        pingTimer = timer
     }
 
     private func registerDarwinObservers() {
@@ -152,7 +274,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 guard let observerPtr else { return }
                 let handler = Unmanaged<SampleHandler>.fromOpaque(observerPtr).takeUnretainedValue()
                 let nextOrientation = handler.sharedStore.loadOrientation()
-                try? handler.videoEncoder?.configure(profile: .diLink15_6FHD, orientation: nextOrientation)
+                try? handler.videoEncoder?.configure(profile: handler.activeProfile, orientation: nextOrientation)
                 if let frame = try? handler.protocolWrapper.makeOrientationFrame(nextOrientation) {
                     handler.transport.sendControl(frame)
                 }
@@ -181,6 +303,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             { _, observerPtr, _, _, _ in
                 guard let observerPtr else { return }
                 let handler = Unmanaged<SampleHandler>.fromOpaque(observerPtr).takeUnretainedValue()
+                handler.userStopped = true
                 handler.finishBroadcastWithError(NSError(domain: "com.byd.mirror", code: 0))
             },
             SharedSessionStore.stopBroadcastNotification,
@@ -190,6 +313,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     override func broadcastFinished() {
+        userStopped = true
+        pingTimer?.cancel()
+        pingTimer = nil
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         CFNotificationCenterRemoveEveryObserver(center, Unmanaged.passUnretained(self).toOpaque())
 

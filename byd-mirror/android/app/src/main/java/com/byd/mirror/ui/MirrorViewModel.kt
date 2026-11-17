@@ -9,6 +9,7 @@ import com.byd.mirror.core.model.DisplayOrientation
 import com.byd.mirror.core.model.DisplayProfile
 import com.byd.mirror.core.model.TelemetryMetrics
 import com.byd.mirror.core.model.TransportType
+import com.byd.mirror.core.model.VideoCodec
 import com.byd.mirror.core.network.AutoConnectMonitor
 import com.byd.mirror.core.network.MiracastDisplayAdapter
 import com.byd.mirror.core.network.NsdDiscoveryManager
@@ -38,11 +39,16 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
     val connectionState: StateFlow<ConnectionState> = MirrorSessionCoordinator.connectionState
     val orientation: StateFlow<DisplayOrientation> = MirrorSessionCoordinator.orientation
     val activeProfile: StateFlow<DisplayProfile> = MirrorSessionCoordinator.activeProfile
+    val preferredCodec: StateFlow<VideoCodec> = MirrorSessionCoordinator.preferredCodec
+    val profileOverride: StateFlow<DisplayProfile?> = MirrorSessionCoordinator.profileOverride
     val telemetry: StateFlow<TelemetryMetrics> = MirrorSessionCoordinator.telemetry
     val pendingPairing: StateFlow<PairingPrompt?> = MirrorSessionCoordinator.pendingPairing
 
     private val _autoConnectEnabled = MutableStateFlow(true)
     val autoConnectEnabled: StateFlow<Boolean> = _autoConnectEnabled.asStateFlow()
+
+    private val _isArabic = MutableStateFlow(true)
+    val isArabic: StateFlow<Boolean> = _isArabic.asStateFlow()
 
     private val _trustedVehicles = MutableStateFlow(trustedStore.listTrusted())
     val trustedVehicles: StateFlow<List<TrustedVehicle>> = _trustedVehicles.asStateFlow()
@@ -139,6 +145,36 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAutoConnect(enabled: Boolean) {
         _autoConnectEnabled.value = enabled
+    }
+
+    fun setPreferredCodec(codec: VideoCodec) {
+        MirrorSessionCoordinator.setPreferredCodec(codec)
+    }
+
+    fun selectProfileOverride(profile: DisplayProfile?) {
+        MirrorSessionCoordinator.selectProfileOverride(profile)
+    }
+
+    fun toggleLanguage() {
+        _isArabic.value = !_isArabic.value
+    }
+
+    fun connectManualIp(rawHost: String) {
+        val host = rawHost.trim()
+        if (host.isEmpty()) return
+        val manualDevice = BydDevice(
+            id = "manual-$host",
+            displayName = "BYD DiLink ($host)",
+            modelName = "BYD DiLink",
+            diLinkVersion = "5.0",
+            hostAddress = host,
+            controlPort = 47810,
+            mediaPort = 47811,
+            transportType = TransportType.NSD_LAN,
+            supportsRotatingScreen = true,
+            supportsHevc = preferredCodec.value == VideoCodec.H265
+        )
+        connectToDevice(manualDevice)
     }
 
     fun disconnect() {

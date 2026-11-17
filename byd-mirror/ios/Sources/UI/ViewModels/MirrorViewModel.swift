@@ -20,6 +20,10 @@ public final class MirrorViewModel: ObservableObject {
     @Published public var showMiniOverlay: Bool = false
     @Published public var pendingPairing: PairingPrompt?
     @Published public private(set) var trustedVehicles: [TrustedVehicle] = []
+    @Published public var isArabic: Bool = true
+    @Published public private(set) var preferHevc: Bool = true
+    @Published public private(set) var selectedProfileId: String = "auto"
+    @Published public var manualIpInput: String = ""
 
     private let discovery = BonjourP2PDiscovery()
     private let autoConnect = AutoConnectCoordinator()
@@ -74,6 +78,9 @@ public final class MirrorViewModel: ObservableObject {
         }
         .store(in: &cancellables)
 
+        let settings = sharedStore.loadStreamSettings()
+        preferHevc = settings.preferHevc
+        selectedProfileId = settings.profileId
         trustedVehicles = trustedStore.loadAll()
         #if canImport(UserNotifications)
         autoConnectNotifier.requestPermission()
@@ -101,9 +108,66 @@ public final class MirrorViewModel: ObservableObject {
     public func prepareConnection(to device: BydDevice) {
         selectedDevice = device
         sharedStore.saveTargetDevice(device)
-        let negotiated = qualityNegotiator.initialProfile(for: device)
-        activeProfile = negotiated
+        sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: selectedProfileId)
+        activeProfile = resolvedProfile(for: device)
         connectionState = .handshaking(device)
+    }
+
+    public func connectManualIp() {
+        let host = manualIpInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return }
+        let device = BydDevice(
+            id: "manual-\(host)",
+            displayName: "BYD DiLink (\(host))",
+            modelName: "BYD DiLink",
+            diLinkVersion: "5.0",
+            hostAddress: host,
+            controlPort: 47810,
+            mediaPort: 47811,
+            transportType: .lanBonjour,
+            supportsRotatingScreen: true,
+            supportsHevc: preferHevc
+        )
+        prepareConnection(to: device)
+    }
+
+    public func setCodec(preferHevc: Bool) {
+        self.preferHevc = preferHevc
+        sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: selectedProfileId)
+        activeProfile = resolvedProfile(for: selectedDevice)
+    }
+
+    public func selectProfile(id: String) {
+        selectedProfileId = id
+        sharedStore.saveStreamSettings(preferHevc: preferHevc, profileId: id)
+        activeProfile = resolvedProfile(for: selectedDevice)
+    }
+
+    public func toggleLanguage() {
+        isArabic.toggle()
+    }
+
+    private func resolvedProfile(for device: BydDevice?) -> DisplayProfile {
+        let base: DisplayProfile
+        switch selectedProfileId {
+        case DisplayProfile.diLink10_1HD.id:
+            base = .diLink10_1HD
+        case DisplayProfile.diLink12_8FHD.id:
+            base = .diLink12_8FHD
+        case DisplayProfile.diLink15_6FHD.id:
+            base = .diLink15_6FHD
+        default:
+            base = device.map { qualityNegotiator.initialProfile(for: $0) } ?? .diLink15_6FHD
+        }
+        return DisplayProfile(
+            id: base.id,
+            label: base.label,
+            baseWidth: base.baseWidth,
+            baseHeight: base.baseHeight,
+            targetFps: base.targetFps,
+            bitrateMbps: base.bitrateMbps,
+            codec: preferHevc ? .h265 : .h264
+        )
     }
 
     public func confirmTrustedVehicle() {
@@ -226,6 +290,25 @@ public final class MirrorViewModel: ObservableObject {
                 }
             },
             SharedSessionStore.broadcastStateChangedNotification,
+            nil,
+            .deliverImmediately
+        )
+
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observerPtr, _, _, _ in
+                guard let observerPtr else { return }
+                let vm = Unmanaged<MirrorViewModel>.fromOpaque(observerPtr).takeUnretainedValue()
+                Task { @MainActor in
+                    let latest = vm.sharedStore.loadTelemetry()
+                    vm.telemetry.actualFps = latest.fps
+                    vm.telemetry.rttMs = latest.rttMs
+                    vm.telemetry.packetLossPercent = Float(latest.packetLossPercent)
+                    vm.telemetry.currentBitrateMbps = Float(latest.bitrateMbps)
+                }
+            },
+            SharedSessionStore.telemetryUpdatedNotification,
             nil,
             .deliverImmediately
         )

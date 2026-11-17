@@ -64,13 +64,15 @@ class BydReceiverServer(
     private var receivedFramesInWindow = 0
     private var activeMime: String? = null
     private var activeLandscape: Boolean = true
+    private var activeBaseWidth: Int = 1920
+    private var activeBaseHeight: Int = 1080
 
     fun attachSurface(surface: Surface?) {
         targetSurface = surface
         val mime = activeMime
         if (surface != null && mime != null) {
-            val w = if (activeLandscape) 1920 else 1080
-            val h = if (activeLandscape) 1080 else 1920
+            val w = if (activeLandscape) maxOf(activeBaseWidth, activeBaseHeight) else minOf(activeBaseWidth, activeBaseHeight)
+            val h = if (activeLandscape) minOf(activeBaseWidth, activeBaseHeight) else maxOf(activeBaseWidth, activeBaseHeight)
             decoder.configureVideo(surface, w, h, mime)
         }
     }
@@ -163,14 +165,24 @@ class BydReceiverServer(
                         )
                     }
                     OPCODE_CAPABILITIES_REQ -> {
+                        val reqText = payload.decodeToString()
+                        val dimsMatch = Regex("(\\d{3,4})x(\\d{3,4})").find(reqText)
+                        if (dimsMatch != null) {
+                            val w = dimsMatch.groupValues[1].toIntOrNull() ?: 1920
+                            val h = dimsMatch.groupValues[2].toIntOrNull() ?: 1080
+                            activeBaseWidth = maxOf(w, h)
+                            activeBaseHeight = minOf(w, h)
+                        }
                         sendControlFrame(output, OPCODE_CAPABILITIES_RESP, "1920x1080@60|H265,H264".toByteArray())
                     }
                     OPCODE_SESSION_START -> {
                         currentMime = payload.decodeToString().ifBlank { MediaFormat.MIMETYPE_VIDEO_AVC }
                         activeMime = currentMime
                         activeLandscape = isLandscape
+                        val w = if (activeLandscape) activeBaseWidth else activeBaseHeight
+                        val h = if (activeLandscape) activeBaseHeight else activeBaseWidth
                         targetSurface?.let { surface ->
-                            decoder.configureVideo(surface, 1920, 1080, currentMime)
+                            decoder.configureVideo(surface, w, h, currentMime)
                         }
                         decoder.configureAudio()
                         _state.value = ReceiverState.MirroringActive(
@@ -183,8 +195,8 @@ class BydReceiverServer(
                     OPCODE_ORIENTATION_CHANGE -> {
                         isLandscape = payload.firstOrNull() == 0x01.toByte()
                         activeLandscape = isLandscape
-                        val w = if (isLandscape) 1920 else 1080
-                        val h = if (isLandscape) 1080 else 1920
+                        val w = if (isLandscape) activeBaseWidth else activeBaseHeight
+                        val h = if (isLandscape) activeBaseHeight else activeBaseWidth
                         targetSurface?.let { decoder.configureVideo(it, w, h, currentMime) }
                         _state.value = ReceiverState.MirroringActive(
                             phoneName = phoneName,

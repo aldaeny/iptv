@@ -7,6 +7,7 @@ import com.byd.mirror.core.model.DisplayOrientation
 import com.byd.mirror.core.model.DisplayProfile
 import com.byd.mirror.core.model.TelemetryMetrics
 import com.byd.mirror.core.model.ThermalLevel
+import com.byd.mirror.core.model.VideoCodec
 import com.byd.mirror.core.protocol.BydProtocolWrapper
 import com.byd.mirror.core.protocol.QualityNegotiator
 import com.byd.mirror.core.security.TrustedVehicle
@@ -48,6 +49,12 @@ object MirrorSessionCoordinator {
     private val _activeProfile = MutableStateFlow(DisplayProfile.DILINK_15_6_FHD)
     val activeProfile: StateFlow<DisplayProfile> = _activeProfile.asStateFlow()
 
+    private val _preferredCodec = MutableStateFlow(VideoCodec.H265)
+    val preferredCodec: StateFlow<VideoCodec> = _preferredCodec.asStateFlow()
+
+    private val _profileOverride = MutableStateFlow<DisplayProfile?>(null)
+    val profileOverride: StateFlow<DisplayProfile?> = _profileOverride.asStateFlow()
+
     private val _telemetry = MutableStateFlow(TelemetryMetrics())
     val telemetry: StateFlow<TelemetryMetrics> = _telemetry.asStateFlow()
 
@@ -59,6 +66,11 @@ object MirrorSessionCoordinator {
     var onStopServices: (() -> Unit)? = null
 
     private var pingJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var lastConnectedDevice: BydDevice? = null
+    private var appContext: Context? = null
+    @Volatile
+    private var userInitiatedDisconnect = false
 
     fun markDiscovering() {
         if (_connectionState.value is ConnectionState.Idle || _connectionState.value is ConnectionState.Error) {
@@ -75,9 +87,38 @@ object MirrorSessionCoordinator {
         )
     }
 
+    fun setPreferredCodec(codec: VideoCodec) {
+        _preferredCodec.value = codec
+        val updated = _activeProfile.value.copy(codec = codec)
+        _activeProfile.value = updated
+        if (_connectionState.value is ConnectionState.Streaming) {
+            scope.launch {
+                protocolWrapper.startMediaSession(updated)
+                onReconfigureEncoder?.invoke(updated, _orientation.value)
+            }
+        }
+    }
+
+    fun selectProfileOverride(profile: DisplayProfile?) {
+        _profileOverride.value = profile
+        if (profile != null) {
+            val withCodec = profile.copy(codec = _preferredCodec.value)
+            _activeProfile.value = withCodec
+            if (_connectionState.value is ConnectionState.Streaming) {
+                onReconfigureEncoder?.invoke(withCodec, _orientation.value)
+            }
+        }
+    }
+
     suspend fun connect(context: Context, device: BydDevice) {
+        appContext = context.applicationContext
+        userInitiatedDisconnect = false
+        reconnectJob?.cancel()
+        lastConnectedDevice = device
+
         _connectionState.value = ConnectionState.Handshaking(device)
-        val negotiated = qualityNegotiator.initialProfileFor(device)
+        val base = _profileOverride.value ?: qualityNegotiator.initialProfileFor(device)
+        val negotiated = base.copy(codec = _preferredCodec.value)
         _activeProfile.value = negotiated
 
         _connectionState.value = ConnectionState.KeyExchange(device)
@@ -126,6 +167,7 @@ object MirrorSessionCoordinator {
         fingerprint: String
     ) {
         protocolWrapper.startMediaSession(profile)
+        _telemetry.value = _telemetry.value.copy(currentBitrateMbps = profile.bitrateMbps.toFloat())
         _connectionState.value = ConnectionState.Streaming(
             device = device,
             profile = profile,
@@ -191,6 +233,9 @@ object MirrorSessionCoordinator {
             },
             onTouchEvent = { xNorm, yNorm, action ->
                 com.byd.mirror.service.BydTouchAccessibilityService.dispatchNormalizedTouch(xNorm, yNorm, action)
+            },
+            onUnexpectedDisconnect = {
+                handleUnexpectedDrop()
             }
         )
 
@@ -203,7 +248,39 @@ object MirrorSessionCoordinator {
         }
     }
 
+    private fun handleUnexpectedDrop() {
+        val device = lastConnectedDevice ?: return
+        val ctx = appContext ?: return
+        if (userInitiatedDisconnect || !TrustedVehiclesStore(ctx).isTrusted(device.id)) {
+            _connectionState.value = ConnectionState.Error("انقطع الاتصال بشاشة السيارة")
+            return
+        }
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = scope.launch {
+            val delaysMs = longArrayOf(1_500L, 3_000L, 5_000L)
+            for ((idx, waitMs) in delaysMs.withIndex()) {
+                if (userInitiatedDisconnect) return@launch
+                _connectionState.value = ConnectionState.Reconnecting(device, idx + 1)
+                delay(waitMs)
+                protocolWrapper.disconnect()
+                val base = _profileOverride.value ?: qualityNegotiator.initialProfileFor(device)
+                val profile = base.copy(codec = _preferredCodec.value)
+                val result = protocolWrapper.connectAndHandshake(device, profile)
+                if (result.isSuccess) {
+                    val hs = result.getOrThrow()
+                    activateStreaming(device, profile, hs.fingerprint)
+                    onReconfigureEncoder?.invoke(profile, _orientation.value)
+                    return@launch
+                }
+            }
+            _connectionState.value = ConnectionState.Error("تعذر إعادة الاتصال بشاشة BYD")
+        }
+    }
+
     suspend fun disconnect() {
+        userInitiatedDisconnect = true
+        reconnectJob?.cancel()
+        reconnectJob = null
         pingJob?.cancel()
         pingJob = null
         _pendingPairing.value = null

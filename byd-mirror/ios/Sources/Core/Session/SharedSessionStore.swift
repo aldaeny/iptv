@@ -10,6 +10,7 @@ public final class SharedSessionStore: @unchecked Sendable {
     public static let pairingUpdatedNotification = "com.byd.mirror.darwin.pairingUpdated" as CFString
     public static let pairingConfirmedNotification = "com.byd.mirror.darwin.pairingConfirmed" as CFString
     public static let broadcastStateChangedNotification = "com.byd.mirror.darwin.broadcastState" as CFString
+    public static let telemetryUpdatedNotification = "com.byd.mirror.darwin.telemetryUpdated" as CFString
 
     private enum Keys {
         static let deviceId = "byd.target.deviceId"
@@ -17,12 +18,18 @@ public final class SharedSessionStore: @unchecked Sendable {
         static let controlPort = "byd.target.controlPort"
         static let mediaPort = "byd.target.mediaPort"
         static let orientation = "byd.stream.orientation"
+        static let preferHevc = "byd.stream.preferHevc"
+        static let profileId = "byd.stream.profileId"
         static let pairingPin = "byd.stream.pairingPin"
         static let fingerprint = "byd.stream.fingerprint"
         static let deviceName = "byd.target.deviceName"
         static let broadcastActive = "byd.stream.active"
         static let broadcastError = "byd.stream.error"
         static let trustedDeviceIds = "byd.trusted.deviceIds"
+        static let telemetryFps = "byd.telemetry.fps"
+        static let telemetryRtt = "byd.telemetry.rtt"
+        static let telemetryLoss = "byd.telemetry.loss"
+        static let telemetryBitrate = "byd.telemetry.bitrate"
     }
 
     private let defaults: UserDefaults
@@ -98,6 +105,34 @@ public final class SharedSessionStore: @unchecked Sendable {
 
     public func requestStopBroadcast() {
         postDarwinNotification(Self.stopBroadcastNotification)
+    }
+
+    public func saveStreamSettings(preferHevc: Bool, profileId: String) {
+        defaults.set(preferHevc, forKey: Keys.preferHevc)
+        defaults.set(profileId, forKey: Keys.profileId)
+    }
+
+    public func loadStreamSettings() -> (preferHevc: Bool, profileId: String) {
+        let hasHevcKey = defaults.object(forKey: Keys.preferHevc) != nil
+        let hevc = hasHevcKey ? defaults.bool(forKey: Keys.preferHevc) : true
+        let pid = defaults.string(forKey: Keys.profileId) ?? "auto"
+        return (hevc, pid)
+    }
+
+    public func saveTelemetry(fps: Int, rttMs: Int, packetLossPercent: Double, bitrateMbps: Double) {
+        defaults.set(fps, forKey: Keys.telemetryFps)
+        defaults.set(rttMs, forKey: Keys.telemetryRtt)
+        defaults.set(packetLossPercent, forKey: Keys.telemetryLoss)
+        defaults.set(bitrateMbps, forKey: Keys.telemetryBitrate)
+        postDarwinNotification(Self.telemetryUpdatedNotification)
+    }
+
+    public func loadTelemetry() -> (fps: Int, rttMs: Int, packetLossPercent: Double, bitrateMbps: Double) {
+        let fps = defaults.integer(forKey: Keys.telemetryFps)
+        let rtt = defaults.integer(forKey: Keys.telemetryRtt)
+        let loss = defaults.double(forKey: Keys.telemetryLoss)
+        let br = defaults.double(forKey: Keys.telemetryBitrate)
+        return (fps > 0 ? fps : 60, rtt, loss, br > 0 ? br : 12.0)
     }
 
     private func postDarwinNotification(_ name: CFString) {

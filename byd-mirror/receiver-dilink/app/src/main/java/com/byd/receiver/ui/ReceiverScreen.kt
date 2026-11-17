@@ -30,6 +30,7 @@ import com.byd.receiver.protocol.ReceiverState
 @Composable
 fun ReceiverScreen(
     state: ReceiverState,
+    localIps: List<String> = emptyList(),
     onSurfaceReady: (android.view.Surface?) -> Unit,
     onTouchNormalized: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> }
 ) {
@@ -101,7 +102,10 @@ fun ReceiverScreen(
                 ) {
                     Text("BYD DiLink WIRELESS RECEIVER", color = cyan, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                     Text("جاهز لاستقبال البث اللاسلكي من الهاتف", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("NSD: _byd-mirror._tcp. • TCP:47810 • UDP:47811", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                    Text("Ready for Wireless Phone Mirroring", color = Color(0xFFCBD5E1), fontSize = 14.sp)
+                    val ipText = if (localIps.isNotEmpty()) localIps.joinToString(" / ") else "Waiting for Wi-Fi / Hotspot"
+                    Text("IP: $ipText • TCP:47810 • UDP:47811", color = cyan, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("NSD: _byd-mirror._tcp.", color = Color(0xFF94A3B8), fontSize = 12.sp)
                 }
             }
             is ReceiverState.PairingVerification -> {

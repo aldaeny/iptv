@@ -22,7 +22,9 @@ public struct MirrorDashboardView: View {
                 VStack(spacing: 18) {
                     headerView
                     heroConnectionCard
+                    streamSettingsCard
                     autoConnectSecurityCard
+                    manualIpCard
                     discoveredDevicesSection
                     trustedVehiclesSection
                 }
@@ -48,14 +50,18 @@ public struct MirrorDashboardView: View {
         }
         .sheet(item: $viewModel.pendingPairing) { prompt in
             VStack(spacing: 18) {
-                Text("تأكيد الاقتران الآمن")
+                Text(viewModel.isArabic ? "تأكيد الاقتران الآمن" : "Verify Secure Pairing")
                     .font(.title3.bold())
                     .foregroundColor(BydColors.textPrimary)
 
-                Text("تحقق من تطابق الرمز الظاهر على شاشة \(prompt.device.displayName):")
-                    .font(.subheadline)
-                    .foregroundColor(BydColors.textSecondary)
-                    .multilineTextAlignment(.center)
+                Text(
+                    viewModel.isArabic
+                        ? "تحقق من تطابق الرمز الظاهر على شاشة \(prompt.device.displayName):"
+                        : "Confirm the 6-digit PIN matches \(prompt.device.displayName):"
+                )
+                .font(.subheadline)
+                .foregroundColor(BydColors.textSecondary)
+                .multilineTextAlignment(.center)
 
                 Text(prompt.pin)
                     .font(.system(size: 40, weight: .heavy, design: .monospaced))
@@ -67,7 +73,7 @@ public struct MirrorDashboardView: View {
                     .foregroundColor(BydColors.evEmerald)
 
                 HStack(spacing: 12) {
-                    Button("إلغاء") {
+                    Button(viewModel.isArabic ? "إلغاء" : "Cancel") {
                         viewModel.rejectPairing()
                     }
                     .frame(maxWidth: .infinity, minHeight: 46)
@@ -75,7 +81,7 @@ public struct MirrorDashboardView: View {
                     .foregroundColor(BydColors.dangerRed)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                    Button("مطابق وحفظ السيارة") {
+                    Button(viewModel.isArabic ? "مطابق وحفظ السيارة" : "Match & Trust") {
                         viewModel.confirmTrustedVehicle()
                     }
                     .frame(maxWidth: .infinity, minHeight: 46)
@@ -98,12 +104,25 @@ public struct MirrorDashboardView: View {
                     .font(.caption.bold())
                     .tracking(2)
                     .foregroundColor(BydColors.evCyan)
-                Text("ربط شاشة السيارة لاسلكياً")
+                Text(viewModel.isArabic ? "ربط شاشة السيارة لاسلكياً" : "Wireless Car Display Link")
                     .font(.title2.bold())
                     .foregroundColor(BydColors.textPrimary)
             }
             Spacer()
-            statusPill
+            HStack(spacing: 8) {
+                Button {
+                    viewModel.toggleLanguage()
+                } label: {
+                    Text(viewModel.isArabic ? "EN" : "AR")
+                        .font(.caption2.bold())
+                        .foregroundColor(BydColors.evCyan)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(BydColors.surfaceElevated)
+                        .clipShape(Capsule())
+                }
+                statusPill
+            }
         }
     }
 
@@ -114,7 +133,7 @@ public struct MirrorDashboardView: View {
             return false
         }()
 
-        return VStack(spacing: 16) {
+        return VStack(spacing: 14) {
             ZStack {
                 Circle()
                     .fill(
@@ -125,10 +144,10 @@ public struct MirrorDashboardView: View {
                             endRadius: 52
                         )
                     )
-                    .frame(width: 92, height: 92)
+                    .frame(width: 84, height: 84)
 
                 Image(systemName: "airplayvideo")
-                    .font(.system(size: 36, weight: .semibold))
+                    .font(.system(size: 34, weight: .semibold))
                     .foregroundColor(isStreaming ? BydColors.evEmerald : BydColors.evCyan)
             }
 
@@ -141,20 +160,30 @@ public struct MirrorDashboardView: View {
                 .font(.caption)
                 .foregroundColor(BydColors.textSecondary)
 
+            if isStreaming {
+                diagnosticsHudRow
+            }
+
             Button(action: viewModel.onOneTapConnect) {
-                Text(isStreaming ? "إنهاء الاتصال" : "اتصال بضغطة واحدة")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(isStreaming ? BydColors.dangerRed : BydColors.evCyan)
-                    .foregroundColor(isStreaming ? .white : Color(red: 4/255, green: 16/255, blue: 22/255))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                Text(
+                    isStreaming
+                        ? (viewModel.isArabic ? "إنهاء الاتصال" : "Disconnect")
+                        : (viewModel.isArabic ? "اتصال بضغطة واحدة" : "One-Tap Connect")
+                )
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(isStreaming ? BydColors.dangerRed : BydColors.evCyan)
+                .foregroundColor(isStreaming ? .white : Color(red: 4/255, green: 16/255, blue: 22/255))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
             HStack(spacing: 12) {
                 Button(action: viewModel.toggleOrientation) {
                     Label(
-                        viewModel.orientation == .landscape ? "أفقي" : "عمودي",
+                        viewModel.orientation == .landscape
+                            ? (viewModel.isArabic ? "أفقي" : "Landscape")
+                            : (viewModel.isArabic ? "عمودي" : "Portrait"),
                         systemImage: "rotate.right"
                     )
                     .font(.subheadline.weight(.medium))
@@ -184,7 +213,7 @@ public struct MirrorDashboardView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
-        .padding(24)
+        .padding(22)
         .background(BydColors.surfaceCard)
         .overlay(
             RoundedRectangle(cornerRadius: 24)
@@ -193,16 +222,105 @@ public struct MirrorDashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 24))
     }
 
+    private var diagnosticsHudRow: some View {
+        HStack {
+            hudMetric(label: "FPS", value: "\(viewModel.telemetry.actualFps)", color: BydColors.evEmerald)
+            Spacer()
+            hudMetric(label: viewModel.isArabic ? "التأخير" : "RTT", value: "\(viewModel.telemetry.rttMs)ms", color: BydColors.evCyan)
+            Spacer()
+            hudMetric(
+                label: viewModel.isArabic ? "السرعة" : "Bitrate",
+                value: String(format: "%.0fM", viewModel.telemetry.currentBitrateMbps),
+                color: BydColors.textPrimary
+            )
+            Spacer()
+            hudMetric(
+                label: viewModel.isArabic ? "فقدان" : "Loss",
+                value: String(format: "%.1f%%", viewModel.telemetry.packetLossPercent),
+                color: viewModel.telemetry.packetLossPercent > 2 ? BydColors.warningAmber : BydColors.evEmerald
+            )
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(BydColors.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func hudMetric(label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption.bold())
+                .foregroundColor(color)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(BydColors.textSecondary)
+        }
+    }
+
+    private var streamSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(viewModel.isArabic ? "إعدادات البث والشاشة" : "Stream Codec & Display Size")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(BydColors.textPrimary)
+
+            HStack(spacing: 8) {
+                chipButton(title: "H.265 (HEVC)", selected: viewModel.preferHevc, accent: BydColors.evCyan) {
+                    viewModel.setCodec(preferHevc: true)
+                }
+                chipButton(title: "H.264 (AVC)", selected: !viewModel.preferHevc, accent: BydColors.evCyan) {
+                    viewModel.setCodec(preferHevc: false)
+                }
+            }
+
+            HStack(spacing: 8) {
+                let options: [(String, String)] = [
+                    ("auto", viewModel.isArabic ? "تلقائي" : "Auto"),
+                    (DisplayProfile.diLink15_6FHD.id, "15.6\""),
+                    (DisplayProfile.diLink12_8FHD.id, "12.8\""),
+                    (DisplayProfile.diLink10_1HD.id, "10.1\"")
+                ]
+                ForEach(options, id: \.0) { pid, title in
+                    chipButton(title: title, selected: viewModel.selectedProfileId == pid, accent: BydColors.evEmerald) {
+                        viewModel.selectProfile(id: pid)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(BydColors.surfaceCard)
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(BydColors.borderSubtle, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func chipButton(title: String, selected: Bool, accent: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(selected ? accent : BydColors.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(selected ? accent.opacity(0.18) : BydColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
     private var autoConnectSecurityCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $viewModel.autoConnectEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("الربط التلقائي")
+                    Text(viewModel.isArabic ? "الربط التلقائي" : "Auto-Connect")
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(BydColors.textPrimary)
-                    Text("تفعيل الاتصال عند دخول نطاق واي فاي BYD")
-                        .font(.caption)
-                        .foregroundColor(BydColors.textSecondary)
+                    Text(
+                        viewModel.isArabic
+                            ? "تفعيل الاتصال عند دخول نطاق واي فاي BYD"
+                            : "Activate when entering BYD Wi-Fi range"
+                    )
+                    .font(.caption)
+                    .foregroundColor(BydColors.textSecondary)
                 }
             }
             .tint(BydColors.evCyan)
@@ -210,9 +328,49 @@ public struct MirrorDashboardView: View {
             HStack(spacing: 8) {
                 Image(systemName: "lock.shield.fill")
                     .foregroundColor(BydColors.evEmerald)
-                Text("تشفير القناة ECDH P-256 + AES-256-GCM")
-                    .font(.caption)
-                    .foregroundColor(BydColors.evEmerald)
+                Text(
+                    viewModel.isArabic
+                        ? "تشفير القناة ECDH P-256 + AES-256-GCM"
+                        : "Encrypted ECDH P-256 + AES-256-GCM"
+                )
+                .font(.caption)
+                .foregroundColor(BydColors.evEmerald)
+            }
+        }
+        .padding(16)
+        .background(BydColors.surfaceCard)
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(BydColors.borderSubtle, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var manualIpCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(viewModel.isArabic ? "الاتصال اليدوي عبر IP (عند حجب الاكتشاف)" : "Manual IP Connect (Bonjour Fallback)")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(BydColors.textPrimary)
+
+            HStack(spacing: 8) {
+                TextField("192.168.43.1", text: $viewModel.manualIpInput)
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocorrectionDisabled()
+                    .padding(10)
+                    .background(BydColors.surfaceElevated)
+                    .foregroundColor(BydColors.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                Button(action: viewModel.connectManualIp) {
+                    Text(viewModel.isArabic ? "ربط" : "Connect")
+                        .font(.subheadline.bold())
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(BydColors.evCyan)
+                        .foregroundColor(Color(red: 4/255, green: 16/255, blue: 22/255))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .disabled(viewModel.manualIpInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(16)
@@ -226,9 +384,13 @@ public struct MirrorDashboardView: View {
 
     private var discoveredDevicesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("الشاشات المكتشفة (\(viewModel.discoveredDevices.count))")
-                .font(.caption.bold())
-                .foregroundColor(BydColors.textSecondary)
+            Text(
+                viewModel.isArabic
+                    ? "الشاشات المكتشفة (\(viewModel.discoveredDevices.count))"
+                    : "Discovered Screens (\(viewModel.discoveredDevices.count))"
+            )
+            .font(.caption.bold())
+            .foregroundColor(BydColors.textSecondary)
 
             ForEach(viewModel.discoveredDevices) { device in
                 Button {
@@ -241,7 +403,7 @@ public struct MirrorDashboardView: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundColor(BydColors.textPrimary)
                                 if viewModel.isTrusted(deviceId: device.id) {
-                                    Text("موثوقة")
+                                    Text(viewModel.isArabic ? "موثوقة" : "Trusted")
                                         .font(.caption2.bold())
                                         .foregroundColor(BydColors.evEmerald)
                                 }
@@ -251,7 +413,7 @@ public struct MirrorDashboardView: View {
                                 .foregroundColor(BydColors.textSecondary)
                         }
                         Spacer()
-                        Text("ربط")
+                        Text(viewModel.isArabic ? "ربط" : "Connect")
                             .font(.subheadline.bold())
                             .foregroundColor(BydColors.evCyan)
                     }
@@ -267,9 +429,13 @@ public struct MirrorDashboardView: View {
     private var trustedVehiclesSection: some View {
         if !viewModel.trustedVehicles.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("السيارات الموثوقة (\(viewModel.trustedVehicles.count))")
-                    .font(.caption.bold())
-                    .foregroundColor(BydColors.textSecondary)
+                Text(
+                    viewModel.isArabic
+                        ? "السيارات الموثوقة (\(viewModel.trustedVehicles.count))"
+                        : "Trusted Vehicles (\(viewModel.trustedVehicles.count))"
+                )
+                .font(.caption.bold())
+                .foregroundColor(BydColors.textSecondary)
 
                 ForEach(viewModel.trustedVehicles, id: \.id) { vehicle in
                     HStack {
@@ -304,12 +470,13 @@ public struct MirrorDashboardView: View {
     private var statusPill: some View {
         let (title, color): (String, Color) = {
             switch viewModel.connectionState {
-            case .idle: return ("جاهز", BydColors.textSecondary)
-            case .discovering: return ("جاري البحث...", BydColors.evCyan)
-            case .handshaking, .keyExchange, .negotiatingQuality: return ("مصافحة آمنة", BydColors.warningAmber)
-            case .streaming: return ("متصل", BydColors.evEmerald)
-            case .reconnecting: return ("إعادة الربط", BydColors.warningAmber)
-            case .error: return ("خطأ", BydColors.dangerRed)
+            case .idle: return (viewModel.isArabic ? "جاهز" : "Ready", BydColors.textSecondary)
+            case .discovering: return (viewModel.isArabic ? "جاري البحث..." : "Scanning...", BydColors.evCyan)
+            case .handshaking, .keyExchange, .negotiatingQuality:
+                return (viewModel.isArabic ? "مصافحة آمنة" : "Securing", BydColors.warningAmber)
+            case .streaming: return (viewModel.isArabic ? "متصل" : "Live", BydColors.evEmerald)
+            case .reconnecting: return (viewModel.isArabic ? "إعادة الربط" : "Reconnecting", BydColors.warningAmber)
+            case .error: return (viewModel.isArabic ? "خطأ" : "Error", BydColors.dangerRed)
             }
         }()
 
@@ -324,14 +491,22 @@ public struct MirrorDashboardView: View {
 
     private var statusHeadline: String {
         switch viewModel.connectionState {
-        case .idle: return "اضغط للبحث والربط مع شاشة BYD"
-        case .discovering: return "جاري البحث عن شاشة BYD عبر Bonjour P2P..."
-        case .handshaking(let device): return "مصافحة بروتوكول \(device.displayName)"
-        case .keyExchange: return "تبادل مفاتيح التشفير ECDH P-256..."
-        case .negotiatingQuality: return "ضبط الدقة المناسبة للشاشة..."
-        case .streaming(let device, _, _, _): return "بث مباشر إلى \(device.displayName)"
-        case .reconnecting(_, let attempt): return "إعادة الاتصال (محاولة \(attempt))"
-        case .error(let msg): return msg
+        case .idle:
+            return viewModel.isArabic ? "اضغط للبحث والربط مع شاشة BYD" : "Tap to scan & mirror to BYD screen"
+        case .discovering:
+            return viewModel.isArabic ? "جاري البحث عن شاشة BYD عبر Bonjour P2P..." : "Scanning for BYD screen via Bonjour P2P..."
+        case .handshaking(let device):
+            return viewModel.isArabic ? "مصافحة بروتوكول \(device.displayName)" : "Handshaking with \(device.displayName)"
+        case .keyExchange:
+            return viewModel.isArabic ? "تبادل مفاتيح التشفير ECDH P-256..." : "Exchanging ECDH P-256 keys..."
+        case .negotiatingQuality:
+            return viewModel.isArabic ? "ضبط الدقة المناسبة للشاشة..." : "Negotiating display quality..."
+        case .streaming(let device, _, _, _):
+            return viewModel.isArabic ? "بث مباشر إلى \(device.displayName)" : "Streaming live to \(device.displayName)"
+        case .reconnecting(_, let attempt):
+            return viewModel.isArabic ? "إعادة الاتصال (محاولة \(attempt))" : "Reconnecting (Attempt \(attempt))"
+        case .error(let msg):
+            return msg
         }
     }
 }
