@@ -2,7 +2,7 @@ name: BydWirelessMirror
 options:
   bundleIdPrefix: com.byd.mirror
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "16.2"
 
 targets:
   BydWirelessMirror:

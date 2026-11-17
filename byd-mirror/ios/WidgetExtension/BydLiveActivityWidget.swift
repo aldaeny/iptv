@@ -2,7 +2,6 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-@available(iOS 16.1, *)
 @main
 struct BydMirrorWidgetBundle: WidgetBundle {
     var body: some Widget {
@@ -10,7 +9,6 @@ struct BydMirrorWidgetBundle: WidgetBundle {
     }
 }
 
-@available(iOS 16.1, *)
 struct BydLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BydMirrorActivityAttributes.self) { context in

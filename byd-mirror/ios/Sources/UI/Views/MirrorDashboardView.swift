@@ -1,6 +1,7 @@
 import AVFoundation
 import ReplayKit
 import SwiftUI
+import UIKit
 
 public struct MirrorDashboardView: View {
     @StateObject private var viewModel = MirrorViewModel()
