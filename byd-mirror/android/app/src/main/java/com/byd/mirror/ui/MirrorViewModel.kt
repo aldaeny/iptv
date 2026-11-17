@@ -170,7 +170,7 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
             hostAddress = host,
             controlPort = 47810,
             mediaPort = 47811,
-            transportType = TransportType.NSD_LAN,
+            transportType = TransportType.LAN_NSD,
             supportsRotatingScreen = true,
             supportsHevc = preferredCodec.value == VideoCodec.H265
         )
