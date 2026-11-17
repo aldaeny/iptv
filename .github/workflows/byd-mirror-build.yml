@@ -40,7 +40,14 @@ jobs:
           fi
       - name: Test & build Android Phone APK
         working-directory: byd-mirror/android
-        run: gradle testDebugUnitTest assembleDebug
+        run: |
+          set -o pipefail
+          if ! gradle testDebugUnitTest assembleDebug 2>&1 | tee gradle.log; then
+            grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle.log | head -n 30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
       - name: Upload Phone APK
         uses: actions/upload-artifact@v4
         with:
@@ -67,7 +74,14 @@ jobs:
           fi
       - name: Test & build BYD DiLink Receiver APK
         working-directory: byd-mirror/receiver-dilink
-        run: gradle testDebugUnitTest assembleDebug
+        run: |
+          set -o pipefail
+          if ! gradle testDebugUnitTest assembleDebug 2>&1 | tee gradle.log; then
+            grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle.log | head -n 30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
       - name: Upload Receiver APK
         uses: actions/upload-artifact@v4
         with:
