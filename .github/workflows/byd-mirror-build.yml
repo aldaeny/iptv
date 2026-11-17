@@ -140,12 +140,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(ls -A release-assets)" ]; then
-            echo "No release assets to publish"
+            echo "::error::No release assets to publish"
             exit 1
           fi
-          gh release delete byd-mirror-latest --yes --cleanup-tag >/dev/null 2>&1 || true
-          gh release create byd-mirror-latest release-assets/* \
-            --prerelease \
-            --target "${{ github.sha }}" \
-            --title "BYD Wireless Mirror (Latest Build)" \
-            --notes "Direct APK & IPA downloads (no ZIP wrapper) built from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`)."
+          REPO="${{ github.repository }}"
+          NOTES="Direct APK & IPA downloads (no ZIP wrapper) built from \`${{ github.ref_name }}\` (\`${{ github.sha }}\`)."
+          if gh release view byd-mirror-latest -R "$REPO" >/dev/null 2>&1; then
+            gh release edit byd-mirror-latest -R "$REPO" \
+              --prerelease \
+              --target "${{ github.sha }}" \
+              --title "BYD Wireless Mirror (Latest Build)" \
+              --notes "$NOTES" 2>&1 || {
+                echo "::error::Failed to update release metadata"
+                exit 1
+              }
+            gh release upload byd-mirror-latest release-assets/* -R "$REPO" --clobber 2>&1 || {
+              echo "::error::Failed to upload release assets"
+              exit 1
+            }
+          else
+            gh release create byd-mirror-latest release-assets/* -R "$REPO" \
+              --prerelease \
+              --target "${{ github.sha }}" \
+              --title "BYD Wireless Mirror (Latest Build)" \
+              --notes "$NOTES" 2>&1 || {
+                echo "::error::Failed to create GitHub Pre-release"
+                exit 1
+              }
+          fi
