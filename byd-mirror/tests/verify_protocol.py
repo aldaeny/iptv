@@ -84,6 +84,8 @@ def main():
     assert "mainHandler.post" in kt_acc and "MAX_MOVE_POINTS" in kt_acc, "Accessibility touch thread-safety guard missing"
     kt_p2p = (ROOT / "android/app/src/main/java/com/byd/mirror/core/network/WifiP2pTransport.kt").read_text()
     assert "ContextCompat.registerReceiver" in kt_p2p, "WifiP2pTransport missing Android 14+ ContextCompat.registerReceiver flag"
+    kt_manifest = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text()
+    assert "ACCESS_COARSE_LOCATION" in kt_manifest, "AndroidManifest missing ACCESS_COARSE_LOCATION for CoarseFineLocation lint"
 
     sw_transport = (ROOT / "ios/Sources/Core/Network/PeerTransportClient.swift").read_text()
     assert "generation &+= 1" in sw_transport, "iOS PeerTransportClient missing generation guard"
