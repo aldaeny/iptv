@@ -52,25 +52,36 @@ class ScreenCaptureEncoder(
         }
 
         val (width, height) = profile.dimensionsFor(orientation)
-        val format = MediaFormat.createVideoFormat(profile.codec.mimeType, width, height).apply {
-            setInteger(
-                MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
-            )
-            setInteger(MediaFormat.KEY_BIT_RATE, profile.bitrateMbps * 1_000_000)
-            setInteger(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            setInteger(MediaFormat.KEY_PRIORITY, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+        val requestedMime = profile.codec.mimeType
+        var mediaCodec: MediaCodec? = null
+        for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
+            val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
+                setInteger(
+                    MediaFormat.KEY_COLOR_FORMAT,
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+                )
+                setInteger(MediaFormat.KEY_BIT_RATE, profile.bitrateMbps * 1_000_000)
+                setInteger(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                setInteger(MediaFormat.KEY_PRIORITY, 0)
+                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                }
+            }
+            val created = runCatching {
+                MediaCodec.createEncoderByType(candidateMime).apply {
+                    configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }
+            }.getOrNull()
+            if (created != null) {
+                mediaCodec = created
+                break
             }
         }
-
-        val mediaCodec = MediaCodec.createEncoderByType(profile.codec.mimeType).apply {
-            configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        }
-        val surface = mediaCodec.createInputSurface()
-        mediaCodec.start()
+        val activeCodec = requireNotNull(mediaCodec) { "No hardware video encoder available" }
+        val surface = activeCodec.createInputSurface()
+        activeCodec.start()
 
         val display = mediaProjection.createVirtualDisplay(
             "BYD-Wireless-Display",
@@ -83,16 +94,16 @@ class ScreenCaptureEncoder(
             null
         )
 
-        codec = mediaCodec
+        codec = activeCodec
         inputSurface = surface
         virtualDisplay = display
 
         drainJob = scope.launch(Dispatchers.Default) {
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = runCatching { mediaCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrDefault(-1)
+                val index = runCatching { activeCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrDefault(-1)
                 if (index >= 0) {
-                    val outBuffer = mediaCodec.getOutputBuffer(index)
+                    val outBuffer = activeCodec.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
                         val nalu = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
@@ -109,7 +120,7 @@ class ScreenCaptureEncoder(
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         }
                     }
-                    runCatching { mediaCodec.releaseOutputBuffer(index, false) }
+                    runCatching { activeCodec.releaseOutputBuffer(index, false) }
                 }
             }
         }

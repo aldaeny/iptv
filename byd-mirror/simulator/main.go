@@ -220,7 +220,7 @@ func (c *CryptoSession) Decrypt(wire, aad []byte) ([]byte, error) {
 	if aead == nil {
 		return nil, errors.New("session key not ready")
 	}
-	if len(wire) <= encOverhead {
+	if len(wire) < encOverhead {
 		return nil, errors.New("ciphertext too short")
 	}
 	nonce := wire[:gcmNonceSize]
@@ -256,7 +256,7 @@ func (r *FrameReassembler) Push(payload []byte) []byte {
 	frameID := binary.BigEndian.Uint32(payload[0:4])
 	fragIdx := int(binary.BigEndian.Uint16(payload[4:6]))
 	fragTotal := int(binary.BigEndian.Uint16(payload[6:8]))
-	if fragTotal <= 0 || fragIdx < 0 || fragIdx >= fragTotal {
+	if fragTotal <= 0 || fragTotal > 256 || fragIdx < 0 || fragIdx >= fragTotal {
 		return nil
 	}
 
@@ -270,6 +270,19 @@ func (r *FrameReassembler) Push(payload []byte) []byte {
 	}
 	bucket, ok := r.buckets[frameID]
 	if !ok {
+		if len(r.buckets) >= 16 {
+			var oldestID uint32
+			var oldestTime time.Time
+			first := true
+			for id, b := range r.buckets {
+				if first || b.createdAt.Before(oldestTime) {
+					oldestID = id
+					oldestTime = b.createdAt
+					first = false
+				}
+			}
+			delete(r.buckets, oldestID)
+		}
 		bucket = &FragBucket{total: fragTotal, parts: make(map[int][]byte, fragTotal), createdAt: now}
 		r.buckets[frameID] = bucket
 	}
@@ -333,19 +346,68 @@ type UIState struct {
 	IPs         []string `json:"ips"`
 }
 
+type AntiReplayWindow struct {
+	mu      sync.Mutex
+	highest uint64
+	bitmap  uint64
+}
+
+func (a *AntiReplayWindow) Reset() {
+	a.mu.Lock()
+	a.highest = 0
+	a.bitmap = 0
+	a.mu.Unlock()
+}
+
+func (a *AntiReplayWindow) Accept(seq int) bool {
+	if seq <= 0 {
+		return false
+	}
+	u := uint64(seq)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.highest == 0 {
+		a.highest = u
+		a.bitmap = 1
+		return true
+	}
+	if u > a.highest {
+		shift := u - a.highest
+		if shift >= 64 {
+			a.bitmap = 1
+		} else {
+			a.bitmap = (a.bitmap << shift) | 1
+		}
+		a.highest = u
+		return true
+	}
+	delta := a.highest - u
+	if delta >= 64 {
+		return false
+	}
+	mask := uint64(1) << delta
+	if (a.bitmap & mask) != 0 {
+		return false
+	}
+	a.bitmap |= mask
+	return true
+}
+
 type SimulatorServer struct {
-	crypto     CryptoSession
-	reasm      *FrameReassembler
-	clientsMu  sync.Mutex
-	clients    map[*wsClient]struct{}
-	stateMu    sync.RWMutex
-	uiState    UIState
-	tcpOutMu   sync.Mutex
-	tcpOut     net.Conn
-	outSeq     atomic.Int32
-	framesWin  atomic.Int32
-	droppedWin atomic.Int32
-	lastUdpSeq atomic.Int32
+	crypto          CryptoSession
+	reasm           *FrameReassembler
+	udpReplay       AntiReplayWindow
+	clientsMu       sync.Mutex
+	clients         map[*wsClient]struct{}
+	stateMu         sync.RWMutex
+	uiState         UIState
+	tcpOutMu        sync.Mutex
+	tcpOut          net.Conn
+	outSeq          atomic.Int32
+	framesWin       atomic.Int32
+	droppedWin      atomic.Int32
+	lastUdpSeq      atomic.Int32
+	failedHandshake atomic.Int32
 }
 
 func NewSimulatorServer() *SimulatorServer {
@@ -447,7 +509,7 @@ func parseHeader(hdr []byte) (byte, int, uint32, int, bool) {
 	seq := int(int32(binary.BigEndian.Uint32(hdr[4:8])))
 	ts := binary.BigEndian.Uint32(hdr[8:12])
 	length := int(binary.BigEndian.Uint32(hdr[12:16]))
-	if length < 0 || length > maxPacketBytes {
+	if seq <= 0 || length < 0 || length > maxPacketBytes {
 		return 0, 0, 0, 0, false
 	}
 	return opcode, seq, ts, length, true
@@ -515,7 +577,7 @@ func (s *SimulatorServer) startUDP() {
 			if err != nil {
 				return
 			}
-			if n < headerSize {
+			if n < headerSize || !s.crypto.IsActive() {
 				continue
 			}
 			hdr := buf[:headerSize]
@@ -524,12 +586,12 @@ func (s *SimulatorServer) startUDP() {
 				continue
 			}
 			wire := buf[headerSize : headerSize+length]
-			payload := wire
-			if s.crypto.IsActive() {
-				payload, err = s.crypto.Decrypt(wire, hdr)
-				if err != nil {
-					continue
-				}
+			payload, err := s.crypto.Decrypt(wire, hdr)
+			if err != nil {
+				continue
+			}
+			if !s.udpReplay.Accept(seq) {
+				continue
 			}
 			prev := int(s.lastUdpSeq.Load())
 			if prev != 0 && seq > prev+1 {
@@ -553,12 +615,20 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
+	if fails := s.failedHandshake.Load(); fails >= 3 {
+		backoff := time.Duration(min(int(fails-2), 4)) * time.Second
+		time.Sleep(backoff)
+	}
 	s.tcpOutMu.Lock()
 	s.crypto.Reset()
 	s.reasm.Clear()
+	s.udpReplay.Reset()
 	s.lastUdpSeq.Store(0)
+	s.outSeq.Store(0)
 	s.tcpOut = conn
 	s.tcpOutMu.Unlock()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	handshakeCompleted := false
 
 	phoneName := "BYD Phone"
 	mime := "video/avc"
@@ -628,7 +698,7 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			resp, err := s.crypto.Handshake(payload)
 			if err != nil {
 				log.Printf("Key exchange failed: %v", err)
-				break
+				goto done
 			}
 			s.sendControl(conn, opKeyExchangeResp, resp)
 			s.crypto.Activate()
@@ -643,7 +713,11 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 		case opCapabilitiesReq:
 			_ = dimRe.FindString(string(payload))
 			s.sendControl(conn, opCapabilitiesResp, []byte("1920x1080@60|H264"))
+			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		case opSessionStart:
+			handshakeCompleted = true
+			s.failedHandshake.Store(0)
+			_ = conn.SetReadDeadline(time.Time{})
 			if len(payload) > 0 {
 				mime = string(payload)
 			}
@@ -669,6 +743,9 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				FPS:         60,
 			})
 		case opVideoNalu, opVideoNaluFrag, opAudioAAC:
+			if !s.crypto.IsActive() {
+				goto done
+			}
 			s.handleIncomingMedia(opcode, ts, payload)
 		case opHeartbeatPing:
 			s.sendControl(conn, opHeartbeatPong, payload)
@@ -678,6 +755,9 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	}
 
 done:
+	if !handshakeCompleted {
+		s.failedHandshake.Add(1)
+	}
 	close(stopQos)
 	s.tcpOutMu.Lock()
 	if s.tcpOut == conn {

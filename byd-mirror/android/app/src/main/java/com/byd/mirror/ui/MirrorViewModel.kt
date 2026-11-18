@@ -145,6 +145,11 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
         _trustedVehicles.value = trustedStore.listTrusted()
     }
 
+    fun clearAllTrustedVehicles() {
+        trustedStore.listTrusted().forEach { trustedStore.removeTrustedVehicle(it.id) }
+        _trustedVehicles.value = emptyList()
+    }
+
     fun rejectPairingPin() {
         MirrorSessionCoordinator.rejectPairing()
     }

@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -31,6 +34,9 @@ import com.byd.receiver.protocol.ReceiverState
 fun ReceiverScreen(
     state: ReceiverState,
     localIps: List<String> = emptyList(),
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
+    onDisconnect: () -> Unit = {},
     onSurfaceReady: (android.view.Surface?) -> Unit,
     onTouchNormalized: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> }
 ) {
@@ -38,13 +44,13 @@ fun ReceiverScreen(
     val card = Color(0xFF111827)
     val cyan = Color(0xFF00D4FF)
     val emerald = Color(0xFF10B981)
+    val red = Color(0xFFEF4444)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(bg)
     ) {
-        // Mirror SurfaceView (supports 16:9 landscape and 9:16 portrait cleanly on BYD rotating screen)
         val isLandscape = (state as? ReceiverState.MirroringActive)?.isLandscape ?: true
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -87,7 +93,6 @@ fun ReceiverScreen(
             )
         }
 
-        // Overlay HUD when waiting or verifying PIN
         when (state) {
             is ReceiverState.WaitingForPhone -> {
                 Column(
@@ -105,7 +110,7 @@ fun ReceiverScreen(
                     Text("Ready for Wireless Phone Mirroring", color = Color(0xFFCBD5E1), fontSize = 14.sp)
                     val ipText = if (localIps.isNotEmpty()) localIps.joinToString(" / ") else "Waiting for Wi-Fi / Hotspot"
                     Text("IP: $ipText • TCP:47810 • UDP:47811", color = cyan, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text("NSD: _byd-mirror._tcp.", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Text("NSD: _byd-mirror._tcp. • Beacon UDP:47813", color = Color(0xFF94A3B8), fontSize = 12.sp)
                 }
             }
             is ReceiverState.PairingVerification -> {
@@ -117,12 +122,15 @@ fun ReceiverScreen(
                         .border(1.dp, emerald, RoundedCornerShape(24.dp))
                         .padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("التحقق من الاقتران الآمن", color = emerald, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("التحقق من الاقتران الآمن", color = emerald, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("الجهاز: ${state.phoneName}", color = Color.White, fontSize = 16.sp)
                     Text(state.pin, color = cyan, fontSize = 44.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 6.sp)
                     Text("Fingerprint: ${state.fingerprint}", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                    OutlinedButton(onClick = onDisconnect) {
+                        Text("رفض / إلغاء • Reject", color = red, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
             is ReceiverState.MirroringActive -> {
@@ -131,12 +139,25 @@ fun ReceiverScreen(
                         .align(Alignment.TopEnd)
                         .padding(16.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(card.copy(alpha = 0.78f))
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        .background(card.copy(alpha = 0.85f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("LIVE • ${state.fps} FPS", color = emerald, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("LIVE • ${state.fps} FPS", color = emerald, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text(state.fingerprint, color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Button(
+                        onClick = onToggleMute,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                    ) {
+                        Text(if (isMuted) "كتم الصوت: مفعّل" else "الصوت: يعمل", color = cyan, fontSize = 12.sp)
+                    }
+                    Button(
+                        onClick = onDisconnect,
+                        colors = ButtonDefaults.buttonColors(containerColor = red)
+                    ) {
+                        Text("قطع الاتصال", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

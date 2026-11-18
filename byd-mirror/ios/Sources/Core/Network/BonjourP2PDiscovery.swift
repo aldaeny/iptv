@@ -15,6 +15,8 @@ public final class BonjourP2PDiscovery: ObservableObject {
     private var beaconThread: Thread?
     private var bonjourDevices: [BydDevice] = []
     private var beaconDevices: [BydDevice] = []
+    private var beaconLastSeen: [String: Date] = [:]
+    private var pruneTimer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "com.byd.mirror.bonjour", qos: .userInitiated)
 
     public init() {}
@@ -23,6 +25,23 @@ public final class BonjourP2PDiscovery: ObservableObject {
         stopDiscovery()
         startBonjour()
         startUdpBeaconListener()
+        startBeaconPruner()
+    }
+
+    private func startBeaconPruner() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 2.0, repeating: 2.0)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let now = Date()
+            let expiredIds = self.beaconLastSeen.filter { now.timeIntervalSince($0.value) > 6.5 }.map(\.key)
+            guard !expiredIds.isEmpty else { return }
+            for id in expiredIds { self.beaconLastSeen.removeValue(forKey: id) }
+            self.beaconDevices.removeAll { expiredIds.contains($0.id) }
+            self.publishMerged()
+        }
+        timer.resume()
+        pruneTimer = timer
     }
 
     private func startBonjour() {
@@ -121,6 +140,7 @@ public final class BonjourP2PDiscovery: ObservableObject {
                 )
                 DispatchQueue.main.async {
                     guard let self else { return }
+                    self.beaconLastSeen[dev.id] = Date()
                     if !self.beaconDevices.contains(where: { $0.hostAddress == host && $0.displayName == name }) {
                         self.beaconDevices = self.beaconDevices.filter { $0.hostAddress != host } + [dev]
                         self.publishMerged()
@@ -134,10 +154,18 @@ public final class BonjourP2PDiscovery: ObservableObject {
     }
 
     private func publishMerged() {
-        var seen = Set<String>()
+        var seenIds = Set<String>()
+        var seenBeaconNames = Set<String>()
         var merged: [BydDevice] = []
-        for dev in beaconDevices + bonjourDevices {
-            if seen.insert(dev.id).inserted {
+        for dev in beaconDevices {
+            seenBeaconNames.insert(dev.displayName.lowercased())
+            if seenIds.insert(dev.id).inserted {
+                merged.append(dev)
+            }
+        }
+        for dev in bonjourDevices {
+            if seenBeaconNames.contains(dev.displayName.lowercased()) { continue }
+            if seenIds.insert(dev.id).inserted {
                 merged.append(dev)
             }
         }
@@ -145,6 +173,9 @@ public final class BonjourP2PDiscovery: ObservableObject {
     }
 
     public func stopDiscovery() {
+        pruneTimer?.cancel()
+        pruneTimer = nil
+        beaconLastSeen.removeAll()
         browser?.cancel()
         browser = nil
         #if canImport(Darwin)

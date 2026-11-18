@@ -28,6 +28,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var lastRttMs = 0
     private var lastFps = 60
     private var lastLossPct = 0.0
+    private var sentVideoFrames = 0
+    private var lastRxSeq: UInt32 = 0
+    private var useTcpMediaFallback = false
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         userStopped = false
@@ -47,7 +50,18 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
         videoEncoder = HardwareVideoEncoder(isHevc: streamSettings.preferHevc) { [weak self] annexBData, ptsUs in
             guard let self, self.handshakeComplete else { return }
-            if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
+            self.sentVideoFrames += 1
+            if self.useTcpMediaFallback {
+                if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
+                    annexBNalu: annexBData,
+                    timestampUs: ptsUs,
+                    encrypt: self.protocolWrapper.isEncrypted
+                ) {
+                    for packet in packets {
+                        self.transport.sendControl(packet)
+                    }
+                }
+            } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
                 annexBNalu: annexBData,
                 timestampUs: ptsUs,
                 encrypt: self.protocolWrapper.isEncrypted
@@ -64,9 +78,14 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 opcode: .audioAac,
                 rawPayload: aacData,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: self.protocolWrapper.isEncrypted,
+                isUdpMedia: !self.useTcpMediaFallback
             ) {
-                self.transport.sendMediaUdp(frame)
+                if self.useTcpMediaFallback {
+                    self.transport.sendControl(frame)
+                } else {
+                    self.transport.sendMediaUdp(frame)
+                }
             }
         }
 
@@ -135,9 +154,18 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     private func startHandshakeSequence() {
-        transport.startFrameReadLoop { [weak self] frameData in
-            self?.handleIncomingControlFrame(frameData)
-        }
+        lastRxSeq = 0
+        sentVideoFrames = 0
+        useTcpMediaFallback = false
+        transport.startFrameReadLoop(
+            onFrame: { [weak self] frameData in
+                self?.handleIncomingControlFrame(frameData)
+            },
+            onDisconnected: { [weak self] in
+                guard let self, !self.userStopped else { return }
+                self.handleTransportFailure(NSError(domain: "com.byd.mirror", code: -1, userInfo: [NSLocalizedDescriptionKey: "Control channel disconnected"]))
+            }
+        )
 
         if let synFrame = try? protocolWrapper.encodeFrame(
             opcode: .helloSyn,
@@ -152,6 +180,8 @@ final class SampleHandler: RPBroadcastSampleHandler {
         guard let packet = try? protocolWrapper.decodeFrame(data, decrypt: protocolWrapper.isEncrypted) else {
             return
         }
+        guard packet.sequence > lastRxSeq else { return }
+        lastRxSeq = packet.sequence
         switch packet.opcode {
         case .helloAck:
             let pubKey = protocolWrapper.beginKeyExchangePayload()
@@ -207,6 +237,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 let dropped = max(0, Int(Int32(bigEndian: droppedBE)))
                 lastFps = fps
                 lastLossPct = (fps + dropped > 0) ? (Double(dropped) * 100.0 / Double(fps + dropped)) : 0.0
+                if fps == 0, !useTcpMediaFallback, sentVideoFrames >= 15 {
+                    useTcpMediaFallback = true
+                    videoEncoder?.requestKeyFrame()
+                }
                 publishTelemetry()
             }
 

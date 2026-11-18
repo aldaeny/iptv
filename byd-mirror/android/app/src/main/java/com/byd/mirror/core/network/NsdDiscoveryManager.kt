@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +19,7 @@ import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Discovers BYD & Chinese EV Wireless Mirroring sinks on the local car hotspot / Wi-Fi LAN
@@ -34,12 +36,31 @@ class NsdDiscoveryManager(context: Context) {
 
     private var activeDiscoveryListener: NsdManager.DiscoveryListener? = null
     private var beaconJob: Job? = null
+    private var pruneJob: Job? = null
     private var beaconSocket: DatagramSocket? = null
+    private val beaconLastSeenMs = ConcurrentHashMap<String, Long>()
 
     fun startDiscovery() {
         stopDiscovery()
         startNsdDiscovery()
         startUdpBeaconListener()
+        startBeaconPruner()
+    }
+
+    private fun startBeaconPruner() {
+        pruneJob = scope.launch {
+            while (isActive) {
+                delay(2_000L)
+                val now = System.currentTimeMillis()
+                val staleKeys = beaconLastSeenMs.entries
+                    .filter { now - it.value > BEACON_TTL_MS }
+                    .map { it.key }
+                if (staleKeys.isNotEmpty()) {
+                    staleKeys.forEach { beaconLastSeenMs.remove(it) }
+                    _services.value = _services.value.filterNot { it.id in staleKeys }
+                }
+            }
+        }
     }
 
     private fun startNsdDiscovery() {
@@ -131,6 +152,9 @@ class NsdDiscoveryManager(context: Context) {
     }
 
     private fun upsertDevice(device: BydDevice) {
+        if (device.id.startsWith("beacon-")) {
+            beaconLastSeenMs[device.id] = System.currentTimeMillis()
+        }
         val current = _services.value
         if (current.any { it.hostAddress == device.hostAddress && it.displayName == device.displayName }) return
         _services.value = current.filterNot { it.hostAddress == device.hostAddress } + device
@@ -141,8 +165,11 @@ class NsdDiscoveryManager(context: Context) {
             runCatching { nsdManager?.stopServiceDiscovery(listener) }
         }
         activeDiscoveryListener = null
+        pruneJob?.cancel()
+        pruneJob = null
         beaconJob?.cancel()
         beaconJob = null
+        beaconLastSeenMs.clear()
         runCatching { beaconSocket?.close() }
         beaconSocket = null
     }
@@ -150,5 +177,6 @@ class NsdDiscoveryManager(context: Context) {
     companion object {
         const val SERVICE_TYPE = "_byd-mirror._tcp."
         const val BEACON_UDP_PORT = 47813
+        private const val BEACON_TTL_MS = 6_500L
     }
 }

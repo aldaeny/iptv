@@ -27,6 +27,9 @@ public final class DirectMirrorSession: @unchecked Sendable {
     private var lastFps = 60
     private var lastLossPct: Float = 0
     private var sessionFingerprint = "ECDH-P256"
+    private var sentVideoFrames = 0
+    private var lastRxSeq: UInt32 = 0
+    private var useTcpMediaFallback = false
 
     public var onPairingVerification: (@Sendable (BydDevice, String, String) -> Void)?
     public var onStreamingStarted: (@Sendable (BydDevice, DisplayProfile, String) -> Void)?
@@ -94,6 +97,9 @@ public final class DirectMirrorSession: @unchecked Sendable {
         }
         streamingActive = false
         capabilitiesReady = false
+        sentVideoFrames = 0
+        lastRxSeq = 0
+        useTcpMediaFallback = false
         audioEncoder?.stop()
         videoEncoder?.stop()
         audioEncoder = nil
@@ -122,9 +128,18 @@ public final class DirectMirrorSession: @unchecked Sendable {
     }
 
     private func startHandshake() {
-        transport.startFrameReadLoop { [weak self] frameData in
-            self?.handleControlFrame(frameData)
-        }
+        lastRxSeq = 0
+        sentVideoFrames = 0
+        useTcpMediaFallback = false
+        transport.startFrameReadLoop(
+            onFrame: { [weak self] frameData in
+                self?.handleControlFrame(frameData)
+            },
+            onDisconnected: { [weak self] in
+                guard let self, !self.userStopped else { return }
+                self.handleTransportFailure(NSError(domain: "com.byd.mirror", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection dropped"]))
+            }
+        )
         if let syn = try? protocolWrapper.encodeFrame(
             opcode: .helloSyn,
             rawPayload: Data("BYD-IOS-DIRECT-1.0".utf8),
@@ -138,6 +153,8 @@ public final class DirectMirrorSession: @unchecked Sendable {
         guard let packet = try? protocolWrapper.decodeFrame(data, decrypt: protocolWrapper.isEncrypted) else {
             return
         }
+        guard packet.sequence > lastRxSeq else { return }
+        lastRxSeq = packet.sequence
         switch packet.opcode {
         case .helloAck:
             let pub = protocolWrapper.beginKeyExchangePayload()
@@ -189,6 +206,10 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 let dropped = max(0, Int(Int32(bigEndian: dropBE)))
                 lastFps = fps
                 lastLossPct = (fps + dropped > 0) ? (Float(dropped) * 100.0 / Float(fps + dropped)) : 0
+                if fps == 0, !useTcpMediaFallback, sentVideoFrames >= 15 {
+                    useTcpMediaFallback = true
+                    videoEncoder?.requestKeyFrame()
+                }
                 onTelemetry?(lastFps, lastRttMs, lastLossPct, Float(activeProfile.bitrateMbps))
             }
 
@@ -211,7 +232,18 @@ public final class DirectMirrorSession: @unchecked Sendable {
 
         videoEncoder = HardwareVideoEncoder(isHevc: activeProfile.codec == .h265) { [weak self] annexB, ptsUs in
             guard let self, self.streamingActive else { return }
-            if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
+            self.sentVideoFrames += 1
+            if self.useTcpMediaFallback {
+                if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
+                    annexBNalu: annexB,
+                    timestampUs: ptsUs,
+                    encrypt: self.protocolWrapper.isEncrypted
+                ) {
+                    for pkt in packets {
+                        self.transport.sendControl(pkt)
+                    }
+                }
+            } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
                 annexBNalu: annexB,
                 timestampUs: ptsUs,
                 encrypt: self.protocolWrapper.isEncrypted
@@ -228,9 +260,14 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 opcode: .audioAac,
                 rawPayload: aac,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: self.protocolWrapper.isEncrypted,
+                isUdpMedia: !self.useTcpMediaFallback
             ) {
-                self.transport.sendMediaUdp(frame)
+                if self.useTcpMediaFallback {
+                    self.transport.sendControl(frame)
+                } else {
+                    self.transport.sendMediaUdp(frame)
+                }
             }
         }
 

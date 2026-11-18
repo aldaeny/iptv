@@ -1,5 +1,6 @@
 package com.byd.mirror.service
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -52,7 +53,7 @@ class MirrorForegroundService : Service() {
                     startForeground(NOTIFICATION_ID, notification)
                 }
 
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
                 val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
                 } else {
@@ -60,8 +61,10 @@ class MirrorForegroundService : Service() {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 }
 
-                if (resultCode != -1 && resultData != null) {
+                if (resultCode == Activity.RESULT_OK && resultData != null) {
                     startCapture(resultCode, resultData)
+                } else {
+                    stopSelf()
                 }
             }
             ACTION_STOP -> stopSelf()
@@ -124,8 +127,10 @@ class MirrorForegroundService : Service() {
         audioEncoder?.stop()
         videoEncoder?.releaseProjection()
         mediaProjection?.stop()
-        serviceScope.launch { MirrorSessionCoordinator.disconnect() }
         serviceScope.cancel()
+        CoroutineScope(Dispatchers.IO).launch {
+            MirrorSessionCoordinator.disconnect()
+        }
         super.onDestroy()
     }
 

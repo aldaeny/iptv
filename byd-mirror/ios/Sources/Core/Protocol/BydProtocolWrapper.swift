@@ -14,6 +14,7 @@ public enum ProtocolOpcode: UInt8, Sendable {
     case audioAac = 0x11
     case keyframeRequest = 0x12
     case videoNaluFrag = 0x13
+    case touchEvent = 0x14
     case heartbeatPing = 0x20
     case heartbeatPong = 0x21
     case qosTelemetry = 0x22
@@ -38,6 +39,8 @@ public enum BydProtocolError: Error {
     case invalidMagic
     case unsupportedVersion
     case unknownOpcode(UInt8)
+    case invalidSequence
+    case invalidPayloadLength
     case truncatedFrame
 }
 
@@ -49,9 +52,11 @@ public final class BydProtocolWrapper: @unchecked Sendable {
     public static let headerSizeBytes = 16
     public static let encryptionOverheadBytes = 28 // 12-byte GCM nonce + 16-byte tag
     public static let udpChunkLimitBytes = 1_150
+    public static let tcpChunkLimitBytes = 32_000
 
     private let crypto: ChannelCryptoManager
     private var sequence: UInt32 = 0
+    private var udpSequence: UInt32 = 0
     private var frameId: UInt32 = 0
     private let lock = NSLock()
     public private(set) var isEncrypted = false
@@ -86,11 +91,18 @@ public final class BydProtocolWrapper: @unchecked Sendable {
         opcode: ProtocolOpcode,
         rawPayload: Data,
         timestampUs: UInt32 = 0,
-        encrypt: Bool
+        encrypt: Bool,
+        isUdpMedia: Bool = false
     ) throws -> Data {
         lock.lock()
-        sequence &+= 1
-        let seq = sequence
+        let seq: UInt32
+        if isUdpMedia {
+            udpSequence &+= 1
+            seq = udpSequence
+        } else {
+            sequence &+= 1
+            seq = sequence
+        }
         lock.unlock()
 
         let wireLength = UInt32(rawPayload.count + (encrypt ? Self.encryptionOverheadBytes : 0))
@@ -110,7 +122,7 @@ public final class BydProtocolWrapper: @unchecked Sendable {
         encrypt: Bool
     ) throws -> [Data] {
         if annexBNalu.count <= Self.udpChunkLimitBytes {
-            return [try encodeFrame(opcode: .videoNalu, rawPayload: annexBNalu, timestampUs: timestampUs, encrypt: encrypt)]
+            return [try encodeFrame(opcode: .videoNalu, rawPayload: annexBNalu, timestampUs: timestampUs, encrypt: encrypt, isUdpMedia: true)]
         }
 
         lock.lock()
@@ -140,7 +152,8 @@ public final class BydProtocolWrapper: @unchecked Sendable {
                     opcode: .videoNaluFrag,
                     rawPayload: fragPayload,
                     timestampUs: timestampUs,
-                    encrypt: encrypt
+                    encrypt: encrypt,
+                    isUdpMedia: true
                 )
             )
         }
@@ -165,8 +178,14 @@ public final class BydProtocolWrapper: @unchecked Sendable {
         }
 
         let seq = readUInt32BE(header, offset: 4)
+        guard seq > 0 && seq <= UInt32(Int32.max) else {
+            throw BydProtocolError.invalidSequence
+        }
         let ts = readUInt32BE(header, offset: 8)
         let payloadLen = Int(readUInt32BE(header, offset: 12))
+        guard payloadLen >= 0 && payloadLen <= 65_536 else {
+            throw BydProtocolError.invalidPayloadLength
+        }
 
         guard frameData.count >= Self.headerSizeBytes + payloadLen else {
             throw BydProtocolError.truncatedFrame
@@ -193,12 +212,59 @@ public final class BydProtocolWrapper: @unchecked Sendable {
         return crypto.sessionFingerprint
     }
 
+    public func encodeVideoTcpFrames(
+        annexBNalu: Data,
+        timestampUs: UInt32,
+        encrypt: Bool
+    ) throws -> [Data] {
+        if annexBNalu.count <= Self.tcpChunkLimitBytes {
+            return [try encodeFrame(opcode: .videoNalu, rawPayload: annexBNalu, timestampUs: timestampUs, encrypt: encrypt)]
+        }
+
+        lock.lock()
+        frameId &+= 1
+        let currentFrameId = frameId
+        lock.unlock()
+
+        let chunkSize = Self.tcpChunkLimitBytes
+        let totalFrags = UInt16((annexBNalu.count + chunkSize - 1) / chunkSize)
+        var packets: [Data] = []
+        packets.reserveCapacity(Int(totalFrags))
+
+        for fragIdx in 0..<Int(totalFrags) {
+            let start = fragIdx * chunkSize
+            let end = min(annexBNalu.count, start + chunkSize)
+            var fragPayload = Data(capacity: 8 + (end - start))
+            var fIdBE = currentFrameId.bigEndian
+            var idxBE = UInt16(fragIdx).bigEndian
+            var totalBE = totalFrags.bigEndian
+            fragPayload.append(Data(bytes: &fIdBE, count: 4))
+            fragPayload.append(Data(bytes: &idxBE, count: 2))
+            fragPayload.append(Data(bytes: &totalBE, count: 2))
+            fragPayload.append(annexBNalu.subdata(in: start..<end))
+
+            packets.append(
+                try encodeFrame(
+                    opcode: .videoNaluFrag,
+                    rawPayload: fragPayload,
+                    timestampUs: timestampUs,
+                    encrypt: encrypt
+                )
+            )
+        }
+        return packets
+    }
+
     public func makeOrientationFrame(_ orientation: DisplayOrientation) throws -> Data {
         let byte: UInt8 = orientation == .landscape ? 0x01 : 0x00
         return try encodeFrame(opcode: .orientationChange, rawPayload: Data([byte]), encrypt: isEncrypted)
     }
 
     public func reset() {
+        lock.lock()
+        sequence = 0
+        udpSequence = 0
+        lock.unlock()
         isEncrypted = false
         crypto.reset()
     }

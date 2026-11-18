@@ -8,6 +8,7 @@ public final class PeerTransportClient: @unchecked Sendable {
 
     private var tcpConnection: NWConnection?
     private var udpConnection: NWConnection?
+    private var generation: UInt64 = 0
     private let queue = DispatchQueue(label: "com.byd.mirror.transport", qos: .userInteractive)
 
     public init() {}
@@ -19,37 +20,46 @@ public final class PeerTransportClient: @unchecked Sendable {
         onReady: @escaping @Sendable () -> Void,
         onFailed: @escaping @Sendable (Error) -> Void
     ) {
-        let tcpOptions = NWProtocolTCP.Options()
-        tcpOptions.noDelay = true
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.generation &+= 1
+            let activeGen = self.generation
+            self.tcpConnection?.cancel()
+            self.udpConnection?.cancel()
 
-        let tcpParams = NWParameters(tls: nil, tcp: tcpOptions)
-        tcpParams.includePeerToPeer = true
-        tcpParams.serviceClass = .interactiveVideo
+            let tcpOptions = NWProtocolTCP.Options()
+            tcpOptions.noDelay = true
 
-        let nwControlPort = NWEndpoint.Port(rawValue: controlPort) ?? 47810
-        let conn = NWConnection(host: NWEndpoint.Host(host), port: nwControlPort, using: tcpParams)
+            let tcpParams = NWParameters(tls: nil, tcp: tcpOptions)
+            tcpParams.includePeerToPeer = true
+            tcpParams.serviceClass = .interactiveVideo
 
-        let udpParams = NWParameters.udp
-        udpParams.includePeerToPeer = true
-        udpParams.serviceClass = .interactiveVideo
-        let nwMediaPort = NWEndpoint.Port(rawValue: mediaPort) ?? 47811
-        let udpConn = NWConnection(host: NWEndpoint.Host(host), port: nwMediaPort, using: udpParams)
-        udpConn.start(queue: queue)
-        udpConnection = udpConn
+            let nwControlPort = NWEndpoint.Port(rawValue: controlPort) ?? 47810
+            let conn = NWConnection(host: NWEndpoint.Host(host), port: nwControlPort, using: tcpParams)
 
-        conn.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                onReady()
-            case .failed(let error):
-                onFailed(error)
-            default:
-                break
+            let udpParams = NWParameters.udp
+            udpParams.includePeerToPeer = true
+            udpParams.serviceClass = .interactiveVideo
+            let nwMediaPort = NWEndpoint.Port(rawValue: mediaPort) ?? 47811
+            let udpConn = NWConnection(host: NWEndpoint.Host(host), port: nwMediaPort, using: udpParams)
+            udpConn.start(queue: self.queue)
+            self.udpConnection = udpConn
+
+            conn.stateUpdateHandler = { [weak self] state in
+                guard let self, self.generation == activeGen else { return }
+                switch state {
+                case .ready:
+                    onReady()
+                case .failed(let error):
+                    onFailed(error)
+                default:
+                    break
+                }
             }
-        }
 
-        conn.start(queue: queue)
-        tcpConnection = conn
+            conn.start(queue: self.queue)
+            self.tcpConnection = conn
+        }
     }
 
     public func sendControl(_ data: Data) {
@@ -70,35 +80,64 @@ public final class PeerTransportClient: @unchecked Sendable {
         }
     }
 
-    public func startFrameReadLoop(onFrame: @escaping @Sendable (Data) -> Void) {
+    public func startFrameReadLoop(
+        onFrame: @escaping @Sendable (Data) -> Void,
+        onDisconnected: @escaping @Sendable () -> Void = {}
+    ) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.readNextFrame(generation: self.generation, onFrame: onFrame, onDisconnected: onDisconnected)
+        }
+    }
+
+    private func readNextFrame(
+        generation activeGen: UInt64,
+        onFrame: @escaping @Sendable (Data) -> Void,
+        onDisconnected: @escaping @Sendable () -> Void
+    ) {
         receiveExact(BydProtocolWrapper.headerSizeBytes) { [weak self] header in
-            guard let self, let header, header.count == BydProtocolWrapper.headerSizeBytes else { return }
+            guard let self, self.generation == activeGen else { return }
+            guard let header, header.count == BydProtocolWrapper.headerSizeBytes else {
+                onDisconnected()
+                return
+            }
             let payloadLen = Int(
                 (UInt32(header[12]) << 24) |
                 (UInt32(header[13]) << 16) |
                 (UInt32(header[14]) << 8) |
                 UInt32(header[15])
             )
-            guard payloadLen >= 0, payloadLen <= 65_536 else { return }
+            guard payloadLen >= 0, payloadLen <= 65_536 else {
+                onDisconnected()
+                return
+            }
 
             if payloadLen == 0 {
                 onFrame(header)
-                self.startFrameReadLoop(onFrame: onFrame)
+                self.readNextFrame(generation: activeGen, onFrame: onFrame, onDisconnected: onDisconnected)
                 return
             }
 
             self.receiveExact(payloadLen) { [weak self] body in
-                guard let self, let body, body.count == payloadLen else { return }
+                guard let self, self.generation == activeGen else { return }
+                guard let body, body.count == payloadLen else {
+                    onDisconnected()
+                    return
+                }
                 onFrame(header + body)
-                self.startFrameReadLoop(onFrame: onFrame)
+                self.readNextFrame(generation: activeGen, onFrame: onFrame, onDisconnected: onDisconnected)
             }
         }
     }
 
     public func disconnect() {
-        tcpConnection?.cancel()
-        udpConnection?.cancel()
-        tcpConnection = nil
-        udpConnection = nil
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.generation &+= 1
+            self.tcpConnection?.cancel()
+            self.udpConnection?.cancel()
+            self.tcpConnection = nil
+            self.udpConnection = nil
+        }
     }
 }

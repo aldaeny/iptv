@@ -28,10 +28,18 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state by server.state.collectAsState()
+            val isMuted by server.isMuted.collectAsState()
             val localIps = remember(state) { resolveLocalIpv4Addresses() }
             ReceiverScreen(
                 state = state,
                 localIps = localIps,
+                isMuted = isMuted,
+                onToggleMute = { server.toggleMute() },
+                onDisconnect = {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        server.disconnectActiveSession()
+                    }
+                },
                 onSurfaceReady = { surface -> server.attachSurface(surface) },
                 onTouchNormalized = { x, y, action ->
                     lifecycleScope.launch(Dispatchers.IO) {

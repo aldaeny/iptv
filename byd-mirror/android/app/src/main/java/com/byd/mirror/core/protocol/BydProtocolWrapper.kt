@@ -66,6 +66,7 @@ class BydProtocolWrapper(
     private val cryptoManager: ChannelCryptoManager = ChannelCryptoManager()
 ) {
     private val sequenceCounter = AtomicInteger(0)
+    private val udpSequenceCounter = AtomicInteger(0)
     private val frameIdCounter = AtomicInteger(0)
     private var controlSocket: Socket? = null
     private var udpMediaSocket: DatagramSocket? = null
@@ -77,6 +78,8 @@ class BydProtocolWrapper(
     private var encryptionActive = false
     private val sentVideoFrames = AtomicInteger(0)
     @Volatile
+    private var lastRxSeq = 0
+    @Volatile
     private var useTcpMediaFallback = false
 
     suspend fun connectAndHandshake(
@@ -87,7 +90,9 @@ class BydProtocolWrapper(
             runCatching { udpMediaSocket?.close() }
             runCatching { controlSocket?.close() }
             sequenceCounter.set(0)
+            udpSequenceCounter.set(0)
             sentVideoFrames.set(0)
+            lastRxSeq = 0
             useTcpMediaFallback = false
             encryptionActive = false
             cryptoManager.reset()
@@ -173,6 +178,8 @@ class BydProtocolWrapper(
             var gracefulStop = false
             while (isActive && controlSocket?.isClosed == false) {
                 val packet = runCatching { readFrame(decrypt = encryptionActive) }.getOrNull() ?: break
+                if (packet.sequence <= lastRxSeq) break
+                lastRxSeq = packet.sequence
                 when (packet.opcode) {
                     ProtocolOpcode.KEYFRAME_REQUEST -> onKeyframeRequested()
                     ProtocolOpcode.QOS_TELEMETRY -> {
@@ -323,7 +330,7 @@ class BydProtocolWrapper(
         rawPayload: ByteArray,
         timestampUs: Int
     ) {
-        val seq = sequenceCounter.incrementAndGet()
+        val seq = udpSequenceCounter.incrementAndGet()
         val wireSize = if (encryptionActive) rawPayload.size + ENCRYPTION_OVERHEAD_BYTES else rawPayload.size
         val header = buildHeader(opcode, seq, timestampUs, wireSize)
         val payload = if (encryptionActive) cryptoManager.encrypt(rawPayload, header) else rawPayload
@@ -373,6 +380,7 @@ class BydProtocolWrapper(
             "Unknown opcode: $opcodeByte"
         }
         val seq = buf.int
+        require(seq > 0) { "Invalid sequence number: $seq" }
         val timestampUs = buf.int
         val payloadLen = buf.int
         require(payloadLen in 0..MAX_PAYLOAD_BYTES) { "Invalid payload length: $payloadLen" }

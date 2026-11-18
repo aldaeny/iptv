@@ -26,16 +26,31 @@ class AutoConnectMonitor(context: Context) {
     private val _detectedSsid = MutableStateFlow<String?>(null)
     val detectedSsid: StateFlow<String?> = _detectedSsid.asStateFlow()
 
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            val ssid = extractSsid(capabilities)
-            _detectedSsid.value = ssid
-            _inBydWifiRange.value = ssid != null && isBydSsid(ssid)
-        }
+    private val networkCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                val ssid = extractSsid(capabilities)
+                _detectedSsid.value = ssid
+                _inBydWifiRange.value = ssid != null && isBydSsid(ssid)
+            }
 
-        override fun onLost(network: Network) {
-            _detectedSsid.value = null
-            _inBydWifiRange.value = false
+            override fun onLost(network: Network) {
+                _detectedSsid.value = null
+                _inBydWifiRange.value = false
+            }
+        }
+    } else {
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                val ssid = extractSsid(capabilities)
+                _detectedSsid.value = ssid
+                _inBydWifiRange.value = ssid != null && isBydSsid(ssid)
+            }
+
+            override fun onLost(network: Network) {
+                _detectedSsid.value = null
+                _inBydWifiRange.value = false
+            }
         }
     }
 

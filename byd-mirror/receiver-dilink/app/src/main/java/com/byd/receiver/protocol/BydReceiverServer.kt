@@ -17,7 +17,9 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -37,8 +39,9 @@ sealed interface ReceiverState {
 
 /**
  * Runs on BYD DiLink head unit:
- * - TCP 47810: Handshake, ECDH P-256 key exchange, orientation & QoS telemetry
+ * - TCP 47810: Async preempting control channel, ECDH P-256 key exchange, orientation & QoS telemetry
  * - UDP 47811: Low-latency encrypted VIDEO_NALU & AUDIO_AAC streaming
+ * - UDP 47813: Zero-config LAN discovery beacon
  */
 class BydReceiverServer(
     private val decoder: VideoAudioDecoder = VideoAudioDecoder(),
@@ -47,17 +50,26 @@ class BydReceiverServer(
     private val _state = MutableStateFlow<ReceiverState>(ReceiverState.WaitingForPhone)
     val state: StateFlow<ReceiverState> = _state.asStateFlow()
 
+    private val _isMuted = MutableStateFlow(false)
+    val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
+
     private var tcpServer: ServerSocket? = null
     private var udpSocket: DatagramSocket? = null
+    @Volatile
+    private var activeClientSocket: Socket? = null
+    @Volatile
     private var activeClientOut: DataOutputStream? = null
     private var targetSurface: Surface? = null
     private var serverJob: Job? = null
+    private var clientJob: Job? = null
     private var udpJob: Job? = null
     private var beaconJob: Job? = null
     private var qosJob: Job? = null
 
+    @Volatile
     private var encryptionActive = false
     private val outSequence = AtomicInteger(0)
+    private val failedHandshakes = AtomicInteger(0)
     private val antiReplay = AntiReplayWindow()
     private val reassembler = UdpFrameReassembler()
     private var lastTcpSeq = 0
@@ -79,8 +91,24 @@ class BydReceiverServer(
         }
     }
 
+    fun toggleMute() {
+        val next = !_isMuted.value
+        _isMuted.value = next
+        decoder.isMuted = next
+    }
+
+    fun disconnectActiveSession() {
+        val out = activeClientOut
+        val sock = activeClientSocket
+        if (out != null) {
+            runCatching { sendControlFrame(out, OPCODE_SESSION_STOP, ByteArray(0)) }
+        }
+        runCatching { sock?.close() }
+    }
+
     fun sendTouchEvent(xNorm: Float, yNorm: Float, action: Byte) {
         val out = activeClientOut ?: return
+        if (!encryptionActive) return
         val payload = ByteBuffer.allocate(9)
             .order(ByteOrder.BIG_ENDIAN)
             .putFloat(xNorm.coerceIn(0f, 1f))
@@ -98,7 +126,13 @@ class BydReceiverServer(
             startBeaconBroadcaster(scope)
             while (isActive) {
                 val client = runCatching { server.accept() }.getOrNull() ?: break
-                handleClient(client, scope)
+                runCatching { activeClientSocket?.close() }
+                val prevJob = clientJob
+                prevJob?.cancel()
+                clientJob = launch(Dispatchers.IO) {
+                    runCatching { prevJob?.join() }
+                    handleClient(client, scope)
+                }
             }
         }
     }
@@ -106,16 +140,37 @@ class BydReceiverServer(
     private fun startBeaconBroadcaster(scope: CoroutineScope) {
         beaconJob = scope.launch(Dispatchers.IO) {
             val socket = runCatching { DatagramSocket().apply { broadcast = true } }.getOrNull() ?: return@launch
-            val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":true}"""
+            val hevcSupported = decoder.supportsHevcDecoder()
+            val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":$hevcSupported}"""
                 .toByteArray(Charsets.UTF_8)
-            val bcastAddr = InetAddress.getByName("255.255.255.255")
-            val packet = DatagramPacket(payload, payload.size, bcastAddr, BEACON_UDP_PORT)
             while (isActive) {
-                runCatching { socket.send(packet) }
+                val targets = resolveBroadcastAddresses()
+                for (addr in targets) {
+                    runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
+                }
                 delay(1_000L)
             }
             runCatching { socket.close() }
         }
+    }
+
+    private fun resolveBroadcastAddresses(): List<InetAddress> {
+        val list = mutableListOf<InetAddress>()
+        runCatching { list.add(InetAddress.getByName("255.255.255.255")) }
+        runCatching {
+            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching
+            while (ifaces.hasMoreElements()) {
+                val iface = ifaces.nextElement()
+                if (!iface.isUp || iface.isLoopback) continue
+                for (ifaceAddr in iface.interfaceAddresses) {
+                    val bcast = ifaceAddr.broadcast
+                    if (bcast is Inet4Address) {
+                        list.add(bcast)
+                    }
+                }
+            }
+        }
+        return list.distinct()
     }
 
     private fun startUdpMediaLoop(scope: CoroutineScope) {
@@ -134,11 +189,19 @@ class BydReceiverServer(
     }
 
     private suspend fun handleClient(client: Socket, scope: CoroutineScope) {
+        val fails = failedHandshakes.get()
+        if (fails >= 3) {
+            delay(minOf(fails - 2, 4) * 1_000L)
+        }
         client.tcpNoDelay = true
+        client.soTimeout = HANDSHAKE_TIMEOUT_MS
+        activeClientSocket = client
+        var handshakeCompleted = false
         val input = DataInputStream(client.getInputStream())
         val output = DataOutputStream(client.getOutputStream())
         activeClientOut = output
         encryptionActive = false
+        outSequence.set(0)
         lastTcpSeq = 0
         lastVideoSeq = 0
         antiReplay.reset()
@@ -191,9 +254,14 @@ class BydReceiverServer(
                             activeBaseWidth = maxOf(w, h)
                             activeBaseHeight = minOf(w, h)
                         }
-                        sendControlFrame(output, OPCODE_CAPABILITIES_RESP, "1920x1080@60|H265,H264".toByteArray())
+                        val codecs = if (decoder.supportsHevcDecoder()) "H265,H264" else "H264"
+                        sendControlFrame(output, OPCODE_CAPABILITIES_RESP, "1920x1080@60|$codecs".toByteArray())
+                        client.soTimeout = PAIRING_CONFIRM_TIMEOUT_MS
                     }
                     OPCODE_SESSION_START -> {
+                        handshakeCompleted = true
+                        failedHandshakes.set(0)
+                        client.soTimeout = 0
                         currentMime = payload.decodeToString().ifBlank { MediaFormat.MIMETYPE_VIDEO_AVC }
                         activeMime = currentMime
                         activeLandscape = isLandscape
@@ -209,6 +277,7 @@ class BydReceiverServer(
                             isLandscape = isLandscape,
                             fps = 60
                         )
+                        sendControlFrame(output, OPCODE_KEYFRAME_REQUEST, ByteArray(0))
                     }
                     OPCODE_ORIENTATION_CHANGE -> {
                         isLandscape = payload.firstOrNull() == 0x01.toByte()
@@ -224,16 +293,19 @@ class BydReceiverServer(
                         )
                     }
                     OPCODE_VIDEO_NALU -> {
+                        if (!encryptionActive) break
                         receivedFramesInWindow++
                         decoder.decodeVideoFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_VIDEO_NALU_FRAG -> {
+                        if (!encryptionActive) break
                         reassembler.pushFragment(payload)?.let { fullFrame ->
                             receivedFramesInWindow++
                             decoder.decodeVideoFrame(fullFrame, parsed.timestampUs.toLong())
                         }
                     }
                     OPCODE_AUDIO_AAC -> {
+                        if (!encryptionActive) break
                         decoder.decodeAudioFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_HEARTBEAT_PING -> {
@@ -244,24 +316,31 @@ class BydReceiverServer(
             }
         }
 
-        qosJob?.cancel()
-        activeMime = null
-        decoder.releaseAll()
-        encryptionActive = false
-        crypto.reset()
-        activeClientOut = null
-        _state.value = ReceiverState.WaitingForPhone
+        if (!handshakeCompleted) {
+            failedHandshakes.incrementAndGet()
+        }
+        if (activeClientSocket === client) {
+            qosJob?.cancel()
+            activeMime = null
+            decoder.releaseAll()
+            encryptionActive = false
+            crypto.reset()
+            activeClientOut = null
+            activeClientSocket = null
+            _state.value = ReceiverState.WaitingForPhone
+        }
         runCatching { client.close() }
     }
 
     private fun processIncomingFrameBytes(bytes: ByteArray) {
+        if (!encryptionActive) return // Security gate: ignore unauthenticated UDP media
         if (bytes.size < HEADER_SIZE_BYTES) return
         val header = bytes.copyOfRange(0, HEADER_SIZE_BYTES)
         val parsed = parseHeader(header) ?: return
         if (!antiReplay.accept(parsed.sequence)) return
         if (bytes.size < HEADER_SIZE_BYTES + parsed.payloadLength) return
         val wirePayload = bytes.copyOfRange(HEADER_SIZE_BYTES, HEADER_SIZE_BYTES + parsed.payloadLength)
-        val payload = if (encryptionActive) crypto.decrypt(wirePayload, header) else wirePayload
+        val payload = runCatching { crypto.decrypt(wirePayload, header) }.getOrNull() ?: return
 
         if (lastVideoSeq != 0 && parsed.sequence > lastVideoSeq + 1) {
             droppedPackets += (parsed.sequence - lastVideoSeq - 1)
@@ -296,8 +375,14 @@ class BydReceiverServer(
                 val current = _state.value
                 if (current is ReceiverState.MirroringActive) {
                     _state.value = current.copy(fps = fps)
+                    if (fps == 0) {
+                        activeClientOut?.let { out ->
+                            runCatching { sendControlFrame(out, OPCODE_KEYFRAME_REQUEST, ByteArray(0)) }
+                        }
+                    }
                 }
                 val out = activeClientOut ?: continue
+                if (!encryptionActive) continue
                 val telemetry = ByteBuffer.allocate(8)
                     .order(ByteOrder.BIG_ENDIAN)
                     .putInt(fps)
@@ -344,7 +429,7 @@ class BydReceiverServer(
         val seq = buf.int
         val ts = buf.int
         val len = buf.int
-        if (len < 0 || len > MAX_PACKET_BYTES) return null
+        if (seq <= 0 || len < 0 || len > MAX_PACKET_BYTES) return null
         return ParsedHeader(opcode, seq, ts, len)
     }
 
@@ -352,7 +437,9 @@ class BydReceiverServer(
         qosJob?.cancel()
         beaconJob?.cancel()
         udpJob?.cancel()
+        clientJob?.cancel()
         serverJob?.cancel()
+        runCatching { activeClientSocket?.close() }
         runCatching { udpSocket?.close() }
         runCatching { tcpServer?.close() }
         decoder.releaseAll()
@@ -362,6 +449,8 @@ class BydReceiverServer(
         const val CONTROL_PORT = 47810
         const val MEDIA_UDP_PORT = 47811
         const val BEACON_UDP_PORT = 47813
+        private const val HANDSHAKE_TIMEOUT_MS = 10_000
+        private const val PAIRING_CONFIRM_TIMEOUT_MS = 60_000
         private const val MAGIC_BYTES: Short = 0x4259
         private const val PROTOCOL_VERSION: Byte = 0x01
         private const val HEADER_SIZE_BYTES = 16

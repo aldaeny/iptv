@@ -10,6 +10,7 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
 
     private var compressionSession: VTCompressionSession?
     private let isHevc: Bool
+    private var activeCodecIsHevc: Bool = false
     private var pendingKeyframe = false
     private let lock = NSLock()
     private let onEncodedFrame: @Sendable (Data, UInt32) -> Void
@@ -23,7 +24,9 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
     public func configure(profile: DisplayProfile, orientation: DisplayOrientation) throws {
         stop()
         let dims = profile.dimensions(for: orientation)
-        let codecType: CMVideoCodecType = (profile.codec == .h265 && isHevc) ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
+        let codecIsHevc = (profile.codec == .h265) && isHevc
+        activeCodecIsHevc = codecIsHevc
+        let codecType: CMVideoCodecType = codecIsHevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
 
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
@@ -89,6 +92,7 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
             frameProps = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
         }
 
+        let codecIsHevc = activeCodecIsHevc
         VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: pixelBuffer,
@@ -96,13 +100,15 @@ public final class HardwareVideoEncoder: @unchecked Sendable {
             duration: duration,
             frameProperties: frameProps,
             infoFlagsOut: nil
-        ) { [onEncodedFrame, isHevc] status, _, encodedBuffer in
+        ) { [onEncodedFrame, codecIsHevc] status, _, encodedBuffer in
             guard status == noErr, let encodedBuffer else { return }
-            guard let annexB = Self.convertSampleBufferToAnnexB(encodedBuffer, isHevc: isHevc),
+            guard let annexB = Self.convertSampleBufferToAnnexB(encodedBuffer, isHevc: codecIsHevc),
                   !annexB.isEmpty else {
                 return
             }
-            let ptsUs = UInt32((CMTimeGetSeconds(pts) * 1_000_000.0).rounded())
+            let seconds = CMTimeGetSeconds(pts)
+            let rawUs = seconds.isFinite ? Int64((seconds * 1_000_000.0).rounded()) : 0
+            let ptsUs = UInt32(truncatingIfNeeded: rawUs)
             onEncodedFrame(annexB, ptsUs)
         }
     }

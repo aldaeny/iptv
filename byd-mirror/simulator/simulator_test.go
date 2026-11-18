@@ -63,6 +63,16 @@ func TestHandshakeRawX963AndSpki(t *testing.T) {
 		t.Fatalf("AES-GCM mismatch: err=%v dec=%q", err, dec)
 	}
 
+	// Empty 0-byte control payload roundtrip (28B wire ciphertext)
+	emptyEnc, err := sim.Encrypt(nil, aad)
+	if err != nil || len(emptyEnc) != encOverhead {
+		t.Fatalf("empty encrypt failed: len=%d err=%v", len(emptyEnc), err)
+	}
+	emptyDec, err := sim.Decrypt(emptyEnc, aad)
+	if err != nil || len(emptyDec) != 0 {
+		t.Fatalf("empty decrypt failed: len=%d err=%v", len(emptyDec), err)
+	}
+
 	// 2. Android-style X.509 SPKI peer key
 	andPriv, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
@@ -102,5 +112,24 @@ func TestFrameReassemblerOutOfOrder(t *testing.T) {
 	full := r.Push(makeFrag(7, 1, 3, []byte("BBB")))
 	if string(full) != "AAABBBCCC" {
 		t.Fatalf("unexpected reassembled frame: %q", full)
+	}
+}
+
+func TestAntiReplayWindowRejectsDuplicatesAndOldPackets(t *testing.T) {
+	var w AntiReplayWindow
+	if w.Accept(0) {
+		t.Fatal("seq 0 must be rejected")
+	}
+	if !w.Accept(1) || !w.Accept(3) || !w.Accept(2) {
+		t.Fatal("in-window out-of-order packets should be accepted")
+	}
+	if w.Accept(2) || w.Accept(3) {
+		t.Fatal("duplicate packets inside window must be rejected")
+	}
+	if !w.Accept(100) {
+		t.Fatal("advancing window must succeed")
+	}
+	if w.Accept(10) {
+		t.Fatal("packet older than 64-packet window must be rejected")
 	}
 }

@@ -67,6 +67,8 @@ class AudioCaptureEncoder(
                 .build()
         }
 
+        check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialize" }
+
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
@@ -86,19 +88,19 @@ class AudioCaptureEncoder(
             val pcmBuf = ByteArray(4096)
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val read = record.read(pcmBuf, 0, pcmBuf.size)
+                val read = runCatching { record.read(pcmBuf, 0, pcmBuf.size) }.getOrDefault(-1)
                 if (read > 0) {
-                    val inIdx = aacCodec.dequeueInputBuffer(5_000L)
+                    val inIdx = runCatching { aacCodec.dequeueInputBuffer(5_000L) }.getOrDefault(-1)
                     if (inIdx >= 0) {
                         val inBuffer = aacCodec.getInputBuffer(inIdx)
                         inBuffer?.clear()
                         inBuffer?.put(pcmBuf, 0, read)
                         val ptsUs = System.nanoTime() / 1_000L
-                        aacCodec.queueInputBuffer(inIdx, 0, read, ptsUs, 0)
+                        runCatching { aacCodec.queueInputBuffer(inIdx, 0, read, ptsUs, 0) }
                     }
                 }
 
-                var outIdx = aacCodec.dequeueOutputBuffer(bufferInfo, 0)
+                var outIdx = runCatching { aacCodec.dequeueOutputBuffer(bufferInfo, 0) }.getOrDefault(-1)
                 while (outIdx >= 0) {
                     val outBuffer = aacCodec.getOutputBuffer(outIdx)
                     if (outBuffer != null && bufferInfo.size > 0 &&
@@ -107,10 +109,10 @@ class AudioCaptureEncoder(
                         val aac = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
                         outBuffer.get(aac)
-                        onEncodedAac(aac, bufferInfo.presentationTimeUs.toInt())
+                        runCatching { onEncodedAac(aac, bufferInfo.presentationTimeUs.toInt()) }
                     }
-                    aacCodec.releaseOutputBuffer(outIdx, false)
-                    outIdx = aacCodec.dequeueOutputBuffer(bufferInfo, 0)
+                    runCatching { aacCodec.releaseOutputBuffer(outIdx, false) }
+                    outIdx = runCatching { aacCodec.dequeueOutputBuffer(bufferInfo, 0) }.getOrDefault(-1)
                 }
             }
         }

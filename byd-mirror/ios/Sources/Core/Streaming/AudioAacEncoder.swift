@@ -48,43 +48,52 @@ public final class AudioAacEncoder: @unchecked Sendable {
         )
 
         var ioOutputPackets: UInt32 = 1
-        var outAudioBuffer = AudioBuffer(
-            mNumberChannels: 2,
-            mDataByteSize: UInt32(outputBuffer.count),
-            mData: &outputBuffer
-        )
-        var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: outAudioBuffer)
+        var encodedData: Data?
+        let convertStatus: OSStatus = outputBuffer.withUnsafeMutableBytes { rawOutBuf in
+            var outAudioBuffer = AudioBuffer(
+                mNumberChannels: 2,
+                mDataByteSize: UInt32(rawOutBuf.count),
+                mData: rawOutBuf.baseAddress
+            )
+            var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: outAudioBuffer)
 
-        let convertStatus = AudioConverterFillComplexBuffer(
-            converter,
-            { _, ioNumberDataPackets, ioData, _, inUserData -> OSStatus in
-                guard let userData = inUserData else { return -1 }
-                let ctx = userData.assumingMemoryBound(to: PcmInputContext.self)
-                if ctx.pointee.consumed {
-                    ioNumberDataPackets.pointee = 0
+            let status = AudioConverterFillComplexBuffer(
+                converter,
+                { _, ioNumberDataPackets, ioData, _, inUserData -> OSStatus in
+                    guard let userData = inUserData else { return -1 }
+                    let ctx = userData.assumingMemoryBound(to: PcmInputContext.self)
+                    if ctx.pointee.consumed {
+                        ioNumberDataPackets.pointee = 0
+                        return noErr
+                    }
+                    ctx.pointee.consumed = true
+                    ioData.pointee.mNumberBuffers = 1
+                    ioData.pointee.mBuffers.mData = ctx.pointee.data
+                    ioData.pointee.mBuffers.mDataByteSize = ctx.pointee.byteSize
+                    ioData.pointee.mBuffers.mNumberChannels = ctx.pointee.channels
                     return noErr
-                }
-                ctx.pointee.consumed = true
-                ioData.pointee.mNumberBuffers = 1
-                ioData.pointee.mBuffers.mData = ctx.pointee.data
-                ioData.pointee.mBuffers.mDataByteSize = ctx.pointee.byteSize
-                ioData.pointee.mBuffers.mNumberChannels = ctx.pointee.channels
-                return noErr
-            },
-            &context,
-            &ioOutputPackets,
-            &outList,
-            nil
-        )
+                },
+                &context,
+                &ioOutputPackets,
+                &outList,
+                nil
+            )
 
-        if convertStatus == noErr, ioOutputPackets > 0 {
-            let encodedCount = Int(outList.mBuffers.mDataByteSize)
-            if encodedCount > 0 {
-                let data = Data(outputBuffer.prefix(encodedCount))
-                let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                let ptsUs = UInt32((CMTimeGetSeconds(pts) * 1_000_000.0).rounded())
-                onEncodedAac(data, ptsUs)
+            if status == noErr, ioOutputPackets > 0, let base = rawOutBuf.baseAddress {
+                let encodedCount = Int(outList.mBuffers.mDataByteSize)
+                if encodedCount > 0 {
+                    encodedData = Data(bytes: base, count: encodedCount)
+                }
             }
+            return status
+        }
+
+        if convertStatus == noErr, let data = encodedData {
+            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let seconds = CMTimeGetSeconds(pts)
+            let rawUs = seconds.isFinite ? Int64((seconds * 1_000_000.0).rounded()) : 0
+            let ptsUs = UInt32(truncatingIfNeeded: rawUs)
+            onEncodedAac(data, ptsUs)
         }
     }
 

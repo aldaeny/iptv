@@ -6,6 +6,7 @@ import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
@@ -15,6 +16,11 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * Receiver-side cryptography engine supporting both:
+ * - Android peers (X.509 SPKI 91-byte P-256 public keys)
+ * - iOS peers (raw uncompressed X9.63 65-byte `0x04 || X || Y` P-256 public keys)
+ */
 class ReceiverCryptoManager {
 
     private val random = SecureRandom()
@@ -25,14 +31,21 @@ class ReceiverCryptoManager {
     var pairingPin: String = "000000"
         private set
 
-    fun generateKeyExchangeResponse(peerPublicKeyX509: ByteArray): Pair<ByteArray, ByteArray> {
+    fun generateKeyExchangeResponse(peerPublicKeyBytes: ByteArray): Pair<ByteArray, ByteArray> {
         val generator = KeyPairGenerator.getInstance("EC")
         generator.initialize(ECGenParameterSpec("secp256r1"), random)
         val localPair = generator.generateKeyPair()
         keyPair = localPair
 
+        val isRawX963 = peerPublicKeyBytes.size == 65 && peerPublicKeyBytes[0] == 0x04.toByte()
+        val spkiPeerBytes = if (isRawX963) {
+            P256_SPKI_PREFIX + peerPublicKeyBytes
+        } else {
+            peerPublicKeyBytes
+        }
+
         val peerPub = KeyFactory.getInstance("EC")
-            .generatePublic(X509EncodedKeySpec(peerPublicKeyX509))
+            .generatePublic(X509EncodedKeySpec(spkiPeerBytes))
 
         val agreement = KeyAgreement.getInstance("ECDH")
         agreement.init(localPair.private)
@@ -50,7 +63,12 @@ class ReceiverCryptoManager {
             (hash[2].toInt() and 0xFF)
         pairingPin = "%06d".format(pinInt % 1_000_000)
 
-        return salt to localPair.public.encoded
+        val localResponseKey = if (isRawX963) {
+            extractRawX963(localPair.public as ECPublicKey)
+        } else {
+            localPair.public.encoded
+        }
+        return salt to localResponseKey
     }
 
     fun encrypt(plaintext: ByteArray, aadHeader: ByteArray): ByteArray {
@@ -81,6 +99,21 @@ class ReceiverCryptoManager {
         pairingPin = "000000"
     }
 
+    private fun extractRawX963(pub: ECPublicKey): ByteArray {
+        val x = pub.w.affineX.toFixedUnsigned32()
+        val y = pub.w.affineY.toFixedUnsigned32()
+        return byteArrayOf(0x04) + x + y
+    }
+
+    private fun java.math.BigInteger.toFixedUnsigned32(): ByteArray {
+        val raw = toByteArray()
+        return when {
+            raw.size == 32 -> raw
+            raw.size > 32 -> raw.copyOfRange(raw.size - 32, raw.size)
+            else -> ByteArray(32 - raw.size) + raw
+        }
+    }
+
     private fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
         val prkMac = Mac.getInstance("HmacSHA256")
         prkMac.init(SecretKeySpec(salt, "HmacSHA256"))
@@ -109,5 +142,12 @@ class ReceiverCryptoManager {
         private const val GCM_NONCE_BYTES = 12
         private const val GCM_TAG_BITS = 128
         private val KDF_INFO = "BYD-MIRROR-SESSION-KEY-V1".toByteArray(Charsets.UTF_8)
+        // ASN.1 DER SubjectPublicKeyInfo header for P-256 uncompressed 65-byte EC point
+        private val P256_SPKI_PREFIX = byteArrayOf(
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86.toByte(),
+            0x48, 0xCE.toByte(), 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A,
+            0x86.toByte(), 0x48, 0xCE.toByte(), 0x3D, 0x03, 0x01, 0x07,
+            0x03, 0x42, 0x00
+        )
     }
 }

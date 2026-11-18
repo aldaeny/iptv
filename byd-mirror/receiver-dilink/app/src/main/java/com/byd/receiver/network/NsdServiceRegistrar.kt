@@ -9,7 +9,7 @@ import android.net.nsd.NsdServiceInfo
  */
 class NsdServiceRegistrar(context: Context) {
 
-    private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val nsdManager: NsdManager? = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
     private var registrationListener: NsdManager.RegistrationListener? = null
 
     fun register(
@@ -19,6 +19,7 @@ class NsdServiceRegistrar(context: Context) {
         model: String = "BYD DiLink 15.6\""
     ) {
         unregister()
+        val mgr = nsdManager ?: return
         val info = NsdServiceInfo().apply {
             this.serviceName = serviceName
             this.serviceType = "_byd-mirror._tcp."
@@ -34,12 +35,13 @@ class NsdServiceRegistrar(context: Context) {
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
         }
         registrationListener = listener
-        nsdManager.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener)
+        runCatching { mgr.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
     }
 
     fun unregister() {
+        val mgr = nsdManager ?: return
         registrationListener?.let {
-            runCatching { nsdManager.unregisterService(it) }
+            runCatching { mgr.unregisterService(it) }
         }
         registrationListener = null
     }

@@ -101,6 +101,7 @@ fun MirrorDashboardScreen(
     var manualIpInput by remember { mutableStateOf("") }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showManualIpDialog by remember { mutableStateOf(false) }
+    var activeInfoDialog by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state) {
         val current = state
@@ -419,8 +420,7 @@ fun MirrorDashboardScreen(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.Rounded.Lock, contentDescription = null, tint = BydColors.EvEmerald, modifier = Modifier.size(14.dp))
                     Text(
@@ -429,8 +429,91 @@ fun MirrorDashboardScreen(
                         fontSize = 12.sp
                     )
                 }
+
+                HorizontalDivider(color = BydColors.BorderSubtle)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { activeInfoDialog = "compat" },
+                        border = BorderStroke(1.dp, BydColors.BorderSubtle),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (isArabic) "توافق السيارات" else "Vehicles", color = BydColors.TextPrimary, fontSize = 11.sp, maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { activeInfoDialog = "help" },
+                        border = BorderStroke(1.dp, BydColors.BorderSubtle),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (isArabic) "حل المشاكل" else "Help", color = BydColors.TextPrimary, fontSize = 11.sp, maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { activeInfoDialog = "privacy" },
+                        border = BorderStroke(1.dp, BydColors.BorderSubtle),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (isArabic) "الخصوصية" else "Privacy", color = BydColors.TextPrimary, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
             }
         }
+    }
+
+    activeInfoDialog?.let { kind ->
+        AlertDialog(
+            onDismissRequest = { activeInfoDialog = null },
+            containerColor = BydColors.SurfaceCard,
+            title = {
+                Text(
+                    text = when (kind) {
+                        "compat" -> if (isArabic) "توافق السيارات الصينية" else "Vehicle Compatibility"
+                        "help" -> if (isArabic) "دليل حل المشاكل" else "Troubleshooting"
+                        else -> if (isArabic) "الخصوصية والأمان" else "Privacy & Security"
+                    },
+                    color = BydColors.TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                val body = when (kind) {
+                    "compat" -> if (isArabic) {
+                        "• BYD DiLink 3.0 / 4.0 / 5.0 (شاشات أندرويد المفتوحة): يتطلب تثبيت BYD Receiver.\n• MG / Chery / Geely / Changan: يعمل إذا سمحت الشاشة بتثبيت APK أو عبر صندوق HDMI/Carlinkit أندرويد خارجي.\n• الشاشات المغلقة بدون تثبيت: تحتاج مستقبل خارجي متصل بالشاشة."
+                    } else {
+                        "• BYD DiLink 3/4/5 (open Android): requires BYD Receiver APK.\n• MG / Chery / Geely / Changan: supported when APK sideloading is allowed or via external Android/HDMI box."
+                    }
+                    "help" -> if (isArabic) {
+                        "1. تأكد أن الهاتف والشاشة على نفس شبكة Wi-Fi أو نقطة الاتصال.\n2. إذا لم تظهر السيارة تلقائياً، استخدم «اتصال بـ IP يدوياً» وأدخل الـ IP الظاهر على شاشة السيارة.\n3. عند ظهور نافذة «بدء التسجيل أو الإرسال»، اضغط «البدء الآن».\n4. في أندرويد 14+: إذا حُظر التثبيت، فعّل التثبيت من مصادر غير معروفة."
+                    } else {
+                        "1. Ensure phone and car are on the same Wi-Fi/hotspot.\n2. Use Connect by IP if auto-discovery is blocked.\n3. Tap Start Now on the screen capture prompt."
+                    }
+                    else -> if (isArabic) {
+                        "• لا يجمع التطبيق أي بيانات ولا يرسل أي شيء للإنترنت أو السحابة.\n• جميع إطارات الشاشة والصوت مشفرة محلياً بين الهاتف والسيارة فقط عبر ECDH P-256 + AES-256-GCM.\n• يمكنك مسح جميع السيارات المحفوظة في أي وقت."
+                    } else {
+                        "• Zero cloud telemetry or analytics.\n• Screen & audio frames stay strictly on local Wi-Fi, encrypted with ECDH P-256 + AES-256-GCM."
+                    }
+                }
+                Text(body, color = BydColors.TextSecondary, fontSize = 13.sp, lineHeight = 20.sp)
+            },
+            confirmButton = {
+                if (kind == "privacy" && trustedVehicles.isNotEmpty()) {
+                    TextButton(onClick = {
+                        viewModel.clearAllTrustedVehicles()
+                        activeInfoDialog = null
+                    }) {
+                        Text(if (isArabic) "مسح السيارات المحفوظة" else "Clear Saved Vehicles", color = BydColors.DangerRed)
+                    }
+                }
+                Button(
+                    onClick = { activeInfoDialog = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = BydColors.EvCyan)
+                ) {
+                    Text(if (isArabic) "حسناً" else "OK", color = Color(0xFF041016), fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 
     // Ultra-Clean Main Screen
