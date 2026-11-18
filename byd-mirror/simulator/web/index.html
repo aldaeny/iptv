@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chinese EV Screen Simulator — محاكي شاشات السيارات الصينية</title>
+  <style>
+    :root {
+      --bg: #05070b;
+      --bezel: #0f141e;
+      --card: #111827;
+      --elevated: #1b2434;
+      --accent: #00d4ff;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: rgba(255,255,255,0.09);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: radial-gradient(circle at top, #0b1628 0%, var(--bg) 68%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px;
+      gap: 12px;
+    }
+    .toolbar {
+      width: 100%;
+      max-width: 1180px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(17, 24, 39, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 10px 16px;
+      backdrop-filter: blur(10px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 10px var(--amber);
+    }
+    .dot.live { background: var(--emerald); box-shadow: 0 0 12px var(--emerald); }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .car-tabs {
+      width: 100%;
+      max-width: 1180px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    button.btn {
+      background: var(--elevated);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+    button.btn:hover { border-color: var(--accent); color: var(--accent); }
+    button.btn.primary { background: var(--accent); color: #041016; border-color: var(--accent); }
+    button.btn.primary:hover { opacity: 0.9; color: #041016; }
+    button.btn.active { background: rgba(0,212,255,0.18); border-color: var(--accent); color: var(--accent); }
+
+    .bezel-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      flex: 1;
+      padding: 6px 0;
+    }
+    .dilink-bezel {
+      background: linear-gradient(145deg, #1a202c, #090d14);
+      border: 2px solid rgba(255,255,255,0.14);
+      border-radius: 26px;
+      padding: 14px;
+      box-shadow: 0 28px 80px rgba(0,0,0,0.75), 0 0 40px rgba(0,212,255,0.08);
+      transition: all 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      width: min(94vw, 980px);
+      aspect-ratio: 16 / 9.8;
+    }
+    .dilink-bezel.portrait {
+      width: min(86vw, 430px);
+      aspect-ratio: 9 / 16.5;
+    }
+    .dilink-bezel.ultrawide {
+      width: min(96vw, 1120px);
+      aspect-ratio: 21 / 9.5;
+    }
+    .dilink-bezel.size-12 { max-width: 840px; }
+    .dilink-bezel.size-10 { max-width: 720px; }
+
+    /* Brand themes */
+    body.theme-chery { --accent: #f97316; }
+    body.theme-geely { --accent: #38bdf8; }
+    body.theme-changan { --accent: #a855f7; }
+    body.theme-haval { --accent: #22c55e; }
+
+    .car-statusbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 14px;
+      background: #0a0f18;
+      border-radius: 14px 14px 0 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .car-statusbar .right-badges {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .badge {
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: var(--elevated);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .badge.green { color: var(--emerald); background: rgba(16,185,129,0.15); }
+
+    .screen-stage {
+      position: relative;
+      flex: 1;
+      background: #04060a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    canvas#videoCanvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      cursor: pointer;
+      display: block;
+    }
+
+    .overlay-card {
+      position: absolute;
+      inset: auto;
+      max-width: 90%;
+      background: rgba(17, 24, 39, 0.94);
+      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+      border-radius: 22px;
+      padding: 24px 28px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.65);
+    }
+    .overlay-card.hidden { display: none; }
+    .tag {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--accent);
+    }
+    .overlay-title { font-size: 20px; font-weight: 700; }
+    .overlay-sub { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .ip-box {
+      background: var(--elevated);
+      border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      color: var(--accent);
+      padding: 8px 16px;
+      border-radius: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 15px;
+      font-weight: 700;
+      direction: ltr;
+    }
+    .pin-digits {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 40px;
+      font-weight: 800;
+      letter-spacing: 8px;
+      color: var(--accent);
+      direction: ltr;
+    }
+
+    .car-dock {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: #0a0f18;
+      border-radius: 0 0 14px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .climate-group { display: flex; gap: 14px; align-items: center; }
+    .temp { color: var(--text); font-weight: 700; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <div class="brand">
+      <span id="connDot" class="dot"></span>
+      <span id="titleText">محاكي شاشات السيارات الصينية</span>
+    </div>
+    <div class="controls">
+      <button class="btn" id="btnRotate" onclick="toggleRotate()">تدوير الشاشة (أفقي / عمودي)</button>
+      <button class="btn active" id="sz15" onclick="setSize('15')">15.6"</button>
+      <button class="btn" id="sz12" onclick="setSize('12')">12.8"</button>
+      <button class="btn" id="sz10" onclick="setSize('10')">10.1"</button>
+      <button class="btn primary" id="btnDemo" onclick="toggleDemo()">تشغيل بث تجريبي</button>
+      <button class="btn" id="btnAudio" onclick="enableAudio()">تفعيل الصوت</button>
+      <button class="btn" onclick="toggleLang()" id="btnLang">EN</button>
+    </div>
+  </div>
+
+  <!-- Chinese Car Infotainment Brand Selector -->
+  <div class="car-tabs">
+    <button class="btn active" id="car-byd" onclick="selectCar('byd')">BYD DiLink 5.0 (دوارة 15.6")</button>
+    <button class="btn" id="car-chery" onclick="selectCar('chery')">Chery / Jetour / Exeed (بانوراما)</button>
+    <button class="btn" id="car-geely" onclick="selectCar('geely')">Geely / Zeekr OS (2.5K)</button>
+    <button class="btn" id="car-changan" onclick="selectCar('changan')">Changan / Deepal (14.6")</button>
+    <button class="btn" id="car-haval" onclick="selectCar('haval')">Haval / Tank / MG</button>
+  </div>
+
+  <div class="bezel-wrap">
+    <div class="dilink-bezel" id="bezel">
+      <div class="car-statusbar">
+        <div class="right-badges">
+          <span id="clockText">--:--</span>
+          <span class="badge" id="codecBadge">READY</span>
+          <span class="badge green hidden" id="fpsBadge">0 FPS</span>
+        </div>
+        <div id="headUnitSpec">BYD DiLink 5.0 • 1920x1080 • TCP 47810 / UDP 47811</div>
+      </div>
+
+      <div class="screen-stage" id="stage">
+        <canvas id="videoCanvas"></canvas>
+
+        <!-- Waiting Overlay -->
+        <div class="overlay-card" id="waitingCard">
+          <div class="tag" id="brandTag">BYD DiLink WIRELESS RECEIVER</div>
+          <div class="overlay-title" id="waitTitle">جاهز لاستقبال البث من هاتفك</div>
+          <div class="overlay-sub" id="waitSub">
+            افتح تطبيق <b>ربط شاشة BYD</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP التالي:
+          </div>
+          <div class="ip-box" id="ipDisplay">127.0.0.1</div>
+          <div class="overlay-sub" id="modeHint" style="font-size:11px;"></div>
+        </div>
+
+        <!-- PIN Verification Overlay -->
+        <div class="overlay-card hidden" id="pinCard">
+          <div class="tag" style="color:var(--emerald)">SECURE PAIRING</div>
+          <div class="overlay-title" id="pinPhoneName">BYD Phone</div>
+          <div class="pin-digits" id="pinDigits">000000</div>
+          <div class="overlay-sub" id="pinFp">Fingerprint: ----</div>
+        </div>
+      </div>
+
+      <div class="car-dock">
+        <div class="climate-group">
+          <span class="temp">22.0°C</span>
+          <span>AUTO AC</span>
+          <span id="powerBadge">EV 86%</span>
+        </div>
+        <div id="statusFooter">وضع الانتظار</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CAR_PROFILES = {
+      byd: {
+        name: 'BYD DiLink 5.0',
+        tag: 'BYD DiLink WIRELESS RECEIVER',
+        spec: 'BYD DiLink 5.0 • 15.6" Rotating • TCP 47810 / UDP 47811',
+        power: 'EV 86% • 410 km',
+        theme: '',
+        ultrawide: false,
+        canRotate: true,
+        accent: '#00d4ff'
+      },
+      chery: {
+        name: 'Jetour / Chery LionOS',
+        tag: 'CHERY / JETOUR / EXEED COCKPIT',
+        spec: 'Jetour / Chery 24.6" Dual Screen • TCP 47810 / UDP 47811',
+        power: '2.0T / PHEV • 92%',
+        theme: 'theme-chery',
+        ultrawide: true,
+        canRotate: false,
+        accent: '#f97316'
+      },
+      geely: {
+        name: 'Geely / Zeekr OS',
+        tag: 'GEELY / ZEEKR / LYNK&CO OS',
+        spec: 'Zeekr 15.4" 2.5K Floating Display • TCP 47810 / UDP 47811',
+        power: 'EV 91% • 540 km',
+        theme: 'theme-geely',
+        ultrawide: false,
+        canRotate: false,
+        accent: '#38bdf8'
+      },
+      changan: {
+        name: 'Changan / Deepal OS',
+        tag: 'CHANGAN / DEEPAL / AVATR DISPLAY',
+        spec: 'Deepal 14.6" Sunflower Screen • TCP 47810 / UDP 47811',
+        power: 'REEV 78% • 620 km',
+        theme: 'theme-changan',
+        ultrawide: false,
+        canRotate: true,
+        accent: '#a855f7'
+      },
+      haval: {
+        name: 'Haval / Tank / MG',
+        tag: 'GWM HAVAL / TANK / MG iSMART',
+        spec: 'Haval / Tank 14.6" Cockpit • TCP 47810 / UDP 47811',
+        power: 'HYBRID • 88%',
+        theme: 'theme-haval',
+        ultrawide: false,
+        canRotate: false,
+        accent: '#22c55e'
+      }
+    };
+
+    let activeCar = 'byd';
+    let isArabic = true;
+    let isPortrait = false;
+    let demoRunning = false;
+    let demoTimer = null;
+    let ws = null;
+    let videoDecoder = null;
+    let audioDecoder = null;
+    let audioCtx = null;
+    let nextAudioTime = 0;
+    let configuredCodec = null;
+    let waitingForKey = true;
+
+    const canvas = document.getElementById('videoCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clockText').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function selectCar(key) {
+      activeCar = key;
+      const prof = CAR_PROFILES[key];
+      document.body.className = prof.theme;
+      Object.keys(CAR_PROFILES).forEach(k => {
+        document.getElementById('car-' + k).classList.toggle('active', k === key);
+      });
+      const bezel = document.getElementById('bezel');
+      bezel.classList.toggle('ultrawide', prof.ultrawide);
+      if (!prof.canRotate && isPortrait) {
+        isPortrait = false;
+        bezel.classList.remove('portrait');
+      }
+      document.getElementById('btnRotate').disabled = !prof.canRotate;
+      document.getElementById('btnRotate').style.opacity = prof.canRotate ? '1' : '0.45';
+      document.getElementById('brandTag').textContent = prof.tag;
+      document.getElementById('headUnitSpec').textContent = prof.spec;
+      document.getElementById('powerBadge').textContent = prof.power;
+    }
+
+    function toggleLang() {
+      isArabic = !isArabic;
+      document.documentElement.dir = isArabic ? 'rtl' : 'ltr';
+      document.getElementById('btnLang').textContent = isArabic ? 'EN' : 'AR';
+      document.getElementById('titleText').textContent = isArabic ? 'محاكي شاشات السيارات الصينية' : 'Chinese EV Screen Simulator';
+      document.getElementById('btnRotate').textContent = isArabic ? 'تدوير الشاشة (أفقي / عمودي)' : 'Rotate Screen';
+      document.getElementById('btnDemo').textContent = demoRunning
+        ? (isArabic ? 'إيقاف البث التجريبي' : 'Stop Demo')
+        : (isArabic ? 'تشغيل بث تجريبي' : 'Start Demo Preview');
+      document.getElementById('btnAudio').textContent = isArabic ? 'تفعيل الصوت' : 'Enable Audio';
+      document.getElementById('waitTitle').textContent = isArabic ? 'جاهز لاستقبال البث من هاتفك' : 'Ready for Wireless Phone Mirroring';
+      document.getElementById('waitSub').innerHTML = isArabic
+        ? 'افتح تطبيق <b>ربط شاشة BYD</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP التالي:'
+        : 'Open <b>BYD Mirror</b> on your phone and tap <b>One-Tap Connect</b> or enter this IP:';
+    }
+
+    function toggleRotate() {
+      if (!CAR_PROFILES[activeCar].canRotate) return;
+      isPortrait = !isPortrait;
+      document.getElementById('bezel').classList.toggle('portrait', isPortrait);
+    }
+
+    function setSize(sz) {
+      const bezel = document.getElementById('bezel');
+      bezel.classList.remove('size-12', 'size-10');
+      ['sz15', 'sz12', 'sz10'].forEach(id => document.getElementById(id).classList.remove('active'));
+      if (sz === '12') bezel.classList.add('size-12');
+      if (sz === '10') bezel.classList.add('size-10');
+      document.getElementById('sz' + sz).classList.add('active');
+    }
+
+    function enableAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      document.getElementById('btnAudio').classList.add('active');
+    }
+
+    function toggleDemo() {
+      demoRunning = !demoRunning;
+      document.getElementById('btnDemo').textContent = demoRunning
+        ? (isArabic ? 'إيقاف البث التجريبي' : 'Stop Demo')
+        : (isArabic ? 'تشغيل بث تجريبي' : 'Start Demo Preview');
+
+      if (!demoRunning) {
+        clearInterval(demoTimer);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        document.getElementById('waitingCard').classList.remove('hidden');
+        document.getElementById('connDot').classList.remove('live');
+        document.getElementById('fpsBadge').classList.add('hidden');
+        return;
+      }
+
+      document.getElementById('waitingCard').classList.add('hidden');
+      document.getElementById('pinCard').classList.add('hidden');
+      document.getElementById('connDot').classList.add('live');
+      const fpsBadge = document.getElementById('fpsBadge');
+      fpsBadge.classList.remove('hidden');
+      fpsBadge.textContent = 'DEMO • 60 FPS';
+      document.getElementById('codecBadge').textContent = 'SIMULATION';
+
+      let t = 0;
+      demoTimer = setInterval(() => {
+        const prof = CAR_PROFILES[activeCar];
+        const w = isPortrait ? 540 : (prof.ultrawide ? 1200 : 960);
+        const h = isPortrait ? 960 : 540;
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+        t += 0.04;
+        const grad = ctx.createLinearGradient(0, 0, w, h);
+        grad.addColorStop(0, '#071324');
+        grad.addColorStop(1, '#09242e');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = prof.accent;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(24, 24, w - 48, h - 48);
+
+        ctx.beginPath();
+        ctx.arc(w / 2, h / 2 - 20, 44 + Math.sin(t * 2) * 8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fill();
+        ctx.strokeStyle = prof.accent;
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${prof.name} — Live Mirror`, w / 2, h / 2 + 62);
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 15px monospace';
+        ctx.fillText(`ECDH P-256 + AES-256-GCM • ${w}x${h} • 60 FPS`, w / 2, h / 2 + 94);
+      }, 33);
+    }
+
+    function initVideoDecoder(mime) {
+      if (!('VideoDecoder' in window)) return;
+      const codec = mime.includes('hevc') ? 'hvc1.1.6.L120.90' : 'avc1.42E01F';
+      if (configuredCodec === codec && videoDecoder && videoDecoder.state === 'configured') return;
+      configuredCodec = codec;
+      waitingForKey = true;
+
+      if (videoDecoder) {
+        try { videoDecoder.close(); } catch (_) {}
+      }
+      videoDecoder = new VideoDecoder({
+        output: frame => {
+          if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+            canvas.width = frame.displayWidth;
+            canvas.height = frame.displayHeight;
+          }
+          ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          frame.close();
+        },
+        error: err => {
+          console.warn('VideoDecoder error:', err);
+          waitingForKey = true;
+        }
+      });
+      videoDecoder.configure({
+        codec,
+        optimizeForLatency: true
+      });
+    }
+
+    function isKeyFrame(nalu, mime) {
+      for (let i = 0; i < nalu.length - 4; i++) {
+        let startLen = 0;
+        if (nalu[i] === 0 && nalu[i+1] === 0 && nalu[i+2] === 1) startLen = 3;
+        else if (nalu[i] === 0 && nalu[i+1] === 0 && nalu[i+2] === 0 && nalu[i+3] === 1) startLen = 4;
+        if (startLen > 0) {
+          const hdr = nalu[i + startLen];
+          if (mime.includes('hevc')) {
+            const nalType = (hdr >> 1) & 0x3F;
+            if (nalType === 19 || nalType === 20 || nalType === 32) return true;
+          } else {
+            const nalType = hdr & 0x1F;
+            if (nalType === 5 || nalType === 7) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function initAudioDecoder() {
+      if (!('AudioDecoder' in window) || audioDecoder) return;
+      audioDecoder = new AudioDecoder({
+        output: audioData => {
+          if (!audioCtx || audioCtx.state !== 'running') {
+            audioData.close();
+            return;
+          }
+          const ch = audioData.numberOfChannels;
+          const frames = audioData.numberOfFrames;
+          const buf = audioCtx.createBuffer(ch, frames, audioData.sampleRate);
+          for (let c = 0; c < ch; c++) {
+            const tmp = new Float32Array(frames);
+            audioData.copyTo(tmp, { planeIndex: c, format: 'f32-planar' });
+            buf.copyToChannel(tmp, c);
+          }
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(audioCtx.destination);
+          const now = audioCtx.currentTime;
+          if (nextAudioTime < now) nextAudioTime = now + 0.02;
+          src.start(nextAudioTime);
+          nextAudioTime += buf.duration;
+          audioData.close();
+        },
+        error: e => console.warn('AudioDecoder error:', e)
+      });
+      audioDecoder.configure({
+        codec: 'mp4a.40.2',
+        sampleRate: 48000,
+        numberOfChannels: 2,
+        description: new Uint8Array([0x11, 0x90])
+      });
+    }
+
+    function connectWebSocket() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        document.getElementById('modeHint').textContent = isArabic
+          ? 'خادم المحاكي المحلي متصل وجاهز لاستقبال البث الحقيقي من الهاتف'
+          : 'Local receiver engine connected — ready for real phone stream';
+      };
+      ws.onerror = () => {
+        document.getElementById('modeHint').textContent = isArabic
+          ? 'معاينة الويب (لبث هاتفك الحقيقي شغّل BydScreenSimulator-Windows.exe على اللابتوب)'
+          : 'Web preview (Run BydScreenSimulator-Windows.exe on Windows to mirror your real phone)';
+      };
+      ws.onmessage = ev => {
+        if (typeof ev.data === 'string') {
+          const msg = JSON.parse(ev.data);
+          handleStateMsg(msg);
+          return;
+        }
+        const buf = new Uint8Array(ev.data);
+        if (buf.length < 10) return;
+        const kind = buf[0];
+        const tsUs = Number(new DataView(buf.buffer, buf.byteOffset + 1, 8).getBigInt64(0));
+        const payload = buf.subarray(9);
+        if (kind === 1 && videoDecoder && videoDecoder.state === 'configured') {
+          const mime = configuredCodec && configuredCodec.startsWith('hvc1') ? 'video/hevc' : 'video/avc';
+          const key = isKeyFrame(payload, mime);
+          if (waitingForKey && !key) return;
+          waitingForKey = false;
+          try {
+            videoDecoder.decode(new EncodedVideoChunk({
+              type: key ? 'key' : 'delta',
+              timestamp: tsUs,
+              data: payload
+            }));
+          } catch (_) {}
+        } else if (kind === 2 && audioDecoder && audioDecoder.state === 'configured') {
+          try {
+            audioDecoder.decode(new EncodedAudioChunk({
+              type: 'key',
+              timestamp: tsUs,
+              data: payload
+            }));
+          } catch (_) {}
+        }
+      };
+    }
+
+    function handleStateMsg(msg) {
+      if (msg.ips && msg.ips.length) {
+        document.getElementById('ipDisplay').textContent = msg.ips.join('  /  ');
+      }
+      if (msg.state === 'waiting') {
+        document.getElementById('waitingCard').classList.remove('hidden');
+        document.getElementById('pinCard').classList.add('hidden');
+        document.getElementById('connDot').classList.remove('live');
+        document.getElementById('fpsBadge').classList.add('hidden');
+        document.getElementById('codecBadge').textContent = 'READY';
+        document.getElementById('statusFooter').textContent = isArabic ? 'وضع الانتظار' : 'Waiting';
+      } else if (msg.state === 'pairing') {
+        document.getElementById('waitingCard').classList.add('hidden');
+        document.getElementById('pinCard').classList.remove('hidden');
+        document.getElementById('pinPhoneName').textContent = msg.phoneName || 'BYD Phone';
+        document.getElementById('pinDigits').textContent = msg.pin || '000000';
+        document.getElementById('pinFp').textContent = 'Fingerprint: ' + (msg.fingerprint || '----');
+        document.getElementById('statusFooter').textContent = isArabic ? 'التحقق من الرمز' : 'PIN Verification';
+      } else if (msg.state === 'streaming') {
+        if (demoRunning) toggleDemo();
+        document.getElementById('waitingCard').classList.add('hidden');
+        document.getElementById('pinCard').classList.add('hidden');
+        document.getElementById('connDot').classList.add('live');
+        const fpsBadge = document.getElementById('fpsBadge');
+        fpsBadge.classList.remove('hidden');
+        fpsBadge.textContent = `LIVE • ${msg.fps || 60} FPS`;
+        document.getElementById('codecBadge').textContent = (msg.mime || '').includes('hevc') ? 'H.265' : 'H.264';
+        document.getElementById('statusFooter').textContent = `${msg.phoneName || 'Phone'} • ${msg.fingerprint || ''}`;
+        document.getElementById('bezel').classList.toggle('portrait', msg.isLandscape === false);
+        isPortrait = msg.isLandscape === false;
+        initVideoDecoder(msg.mime || 'video/avc');
+        initAudioDecoder();
+      }
+    }
+
+    function sendCanvasTouch(ev, action) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+      ws.send(JSON.stringify({ type: 'touch', x, y, action }));
+    }
+    let pointerDown = false;
+    canvas.addEventListener('pointerdown', ev => { pointerDown = true; sendCanvasTouch(ev, 0); });
+    canvas.addEventListener('pointermove', ev => { if (pointerDown) sendCanvasTouch(ev, 2); });
+    canvas.addEventListener('pointerup', ev => { if (pointerDown) { pointerDown = false; sendCanvasTouch(ev, 1); } });
+
+    connectWebSocket();
+  </script>
+</body>
+</html>

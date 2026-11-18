@@ -149,10 +149,29 @@ jobs:
             byd-mirror/ios/BydWirelessMirror-unsigned.ipa
             byd-mirror/ios/BydWirelessMirror-FreeSideload.ipa
 
+  build-windows-simulator:
+    runs-on: ubuntu-latest
+    needs: verify-protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Test & build Chinese EV Windows Simulator (.exe)
+        working-directory: byd-mirror/simulator
+        run: |
+          go test -v ./...
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o BydScreenSimulator-Windows.exe .
+      - name: Upload Windows Simulator
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-windows-simulator
+          path: byd-mirror/simulator/BydScreenSimulator-Windows.exe
+
   publish-release:
     runs-on: ubuntu-latest
-    needs: [build-android-phone, build-byd-receiver, build-ios-check]
-    if: always() && (needs.build-android-phone.result == 'success' || needs.build-byd-receiver.result == 'success' || needs.build-ios-check.result == 'success')
+    needs: [build-android-phone, build-byd-receiver, build-ios-check, build-windows-simulator]
+    if: always() && (needs.build-android-phone.result == 'success' || needs.build-byd-receiver.result == 'success' || needs.build-ios-check.result == 'success' || needs.build-windows-simulator.result == 'success')
     steps:
       - name: Download built artifacts
         uses: actions/download-artifact@v4
@@ -180,6 +199,9 @@ jobs:
           fi
           if [ -f downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-FreeSideload.ipa ]; then
             cp downloaded-artifacts/byd-ios-unsigned-ipa/BydWirelessMirror-FreeSideload.ipa release-assets/BydWirelessMirror-FreeSideload.ipa
+          fi
+          if [ -f downloaded-artifacts/byd-windows-simulator/BydScreenSimulator-Windows.exe ]; then
+            cp downloaded-artifacts/byd-windows-simulator/BydScreenSimulator-Windows.exe release-assets/BydScreenSimulator-Windows.exe
           fi
           ls -lh release-assets
 
