@@ -6,6 +6,8 @@ import UIKit
 public struct MirrorDashboardView: View {
     @StateObject private var viewModel = MirrorViewModel()
     @StateObject private var pipController = PipOverlayController()
+    @State private var showSettingsSheet = false
+    @State private var showManualIpAlert = false
 
     public init() {}
 
@@ -22,13 +24,10 @@ public struct MirrorDashboardView: View {
                 VStack(spacing: 18) {
                     headerView
                     heroConnectionCard
-                    streamSettingsCard
-                    autoConnectSecurityCard
-                    manualIpCard
                     discoveredDevicesSection
-                    trustedVehiclesSection
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
 
             if viewModel.showMiniOverlay {
@@ -48,16 +47,34 @@ public struct MirrorDashboardView: View {
         .onChange(of: viewModel.orientation) { newOrientation in
             pipController.updateStatus(newOrientation == .landscape ? "BYD • أفقي" : "BYD • عمودي")
         }
+        .sheet(isPresented: $showSettingsSheet) {
+            advancedSettingsSheet
+        }
+        .alert(viewModel.isArabic ? "الاتصال برقم IP" : "Connect by IP", isPresented: $showManualIpAlert) {
+            TextField("192.168.43.1", text: $viewModel.manualIpInput)
+                .keyboardType(.numbersAndPunctuation)
+                .autocorrectionDisabled()
+            Button(viewModel.isArabic ? "ربط الآن" : "Connect") {
+                viewModel.connectManualIp()
+            }
+            Button(viewModel.isArabic ? "إلغاء" : "Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                viewModel.isArabic
+                    ? "أدخل رقم IP الظاهر على شاشة تطبيق BYD Receiver في السيارة:"
+                    : "Enter the IP address shown on the BYD Receiver screen:"
+            )
+        }
         .sheet(item: $viewModel.pendingPairing) { prompt in
             VStack(spacing: 18) {
-                Text(viewModel.isArabic ? "تأكيد الاقتران الآمن" : "Verify Secure Pairing")
+                Text(viewModel.isArabic ? "تأكيد الاقتران" : "Verify Pairing")
                     .font(.title3.bold())
                     .foregroundColor(BydColors.textPrimary)
 
                 Text(
                     viewModel.isArabic
-                        ? "تحقق من تطابق الرمز الظاهر على شاشة \(prompt.device.displayName):"
-                        : "Confirm the 6-digit PIN matches \(prompt.device.displayName):"
+                        ? "تأكد من تطابق الرمز على شاشة \(prompt.device.displayName):"
+                        : "Confirm this PIN matches \(prompt.device.displayName):"
                 )
                 .font(.subheadline)
                 .foregroundColor(BydColors.textSecondary)
@@ -68,10 +85,6 @@ public struct MirrorDashboardView: View {
                     .tracking(6)
                     .foregroundColor(BydColors.evCyan)
 
-                Text("Fingerprint: \(prompt.fingerprint)")
-                    .font(.caption)
-                    .foregroundColor(BydColors.evEmerald)
-
                 HStack(spacing: 12) {
                     Button(viewModel.isArabic ? "إلغاء" : "Cancel") {
                         viewModel.rejectPairing()
@@ -81,7 +94,7 @@ public struct MirrorDashboardView: View {
                     .foregroundColor(BydColors.dangerRed)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                    Button(viewModel.isArabic ? "مطابق وحفظ السيارة" : "Match & Trust") {
+                    Button(viewModel.isArabic ? "تأكيد وحفظ" : "Trust Vehicle") {
                         viewModel.confirmTrustedVehicle()
                     }
                     .frame(maxWidth: .infinity, minHeight: 46)
@@ -99,55 +112,63 @@ public struct MirrorDashboardView: View {
 
     private var headerView: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("BYD WIRELESS MIRROR")
-                    .font(.caption.bold())
-                    .tracking(2)
-                    .foregroundColor(BydColors.evCyan)
-                Text(viewModel.isArabic ? "ربط شاشة السيارة لاسلكياً" : "Wireless Car Display Link")
-                    .font(.title2.bold())
-                    .foregroundColor(BydColors.textPrimary)
-            }
+            Text(viewModel.isArabic ? "ربط شاشة BYD" : "BYD Mirror")
+                .font(.title2.bold())
+                .foregroundColor(BydColors.textPrimary)
+                .lineLimit(1)
+
             Spacer()
+
             HStack(spacing: 8) {
+                statusPill
+
                 Button {
                     viewModel.toggleLanguage()
                 } label: {
                     Text(viewModel.isArabic ? "EN" : "AR")
-                        .font(.caption2.bold())
+                        .font(.caption.bold())
                         .foregroundColor(BydColors.evCyan)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(BydColors.surfaceElevated)
                         .clipShape(Capsule())
                 }
-                statusPill
+
+                Button {
+                    showSettingsSheet = true
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(BydColors.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .background(BydColors.surfaceElevated)
+                        .clipShape(Circle())
+                }
             }
         }
     }
 
     private var heroConnectionCard: some View {
-        let dims = viewModel.activeProfile.dimensions(for: viewModel.orientation)
         let isStreaming: Bool = {
             if case .streaming = viewModel.connectionState { return true }
             return false
         }()
 
-        return VStack(spacing: 14) {
+        return VStack(spacing: 16) {
             ZStack {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [BydColors.evCyan.opacity(0.28), BydColors.surfaceElevated],
+                            colors: [(isStreaming ? BydColors.evEmerald : BydColors.evCyan).opacity(0.28), BydColors.surfaceElevated],
                             center: .center,
                             startRadius: 8,
                             endRadius: 52
                         )
                     )
-                    .frame(width: 84, height: 84)
+                    .frame(width: 88, height: 88)
 
                 Image(systemName: "airplayvideo")
-                    .font(.system(size: 34, weight: .semibold))
+                    .font(.system(size: 36, weight: .semibold))
                     .foregroundColor(isStreaming ? BydColors.evEmerald : BydColors.evCyan)
             }
 
@@ -156,10 +177,6 @@ public struct MirrorDashboardView: View {
                 .foregroundColor(BydColors.textPrimary)
                 .multilineTextAlignment(.center)
 
-            Text("\(dims.width)x\(dims.height) • \(viewModel.activeProfile.targetFps) FPS • \(viewModel.activeProfile.codec.rawValue)")
-                .font(.caption)
-                .foregroundColor(BydColors.textSecondary)
-
             if isStreaming {
                 diagnosticsHudRow
             }
@@ -167,65 +184,44 @@ public struct MirrorDashboardView: View {
             Button(action: viewModel.onOneTapConnect) {
                 Text(
                     isStreaming
-                        ? (viewModel.isArabic ? "إنهاء الاتصال" : "Disconnect")
+                        ? (viewModel.isArabic ? "إيقاف البث" : "Stop Mirroring")
                         : (viewModel.isArabic ? "اتصال بضغطة واحدة" : "One-Tap Connect")
                 )
                 .font(.headline)
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(height: 54)
                 .background(isStreaming ? BydColors.dangerRed : BydColors.evCyan)
                 .foregroundColor(isStreaming ? .white : Color(red: 4/255, green: 16/255, blue: 22/255))
                 .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
-            HStack(spacing: 12) {
-                Button(action: viewModel.toggleOrientation) {
-                    Label(
-                        viewModel.orientation == .landscape
-                            ? (viewModel.isArabic ? "أفقي" : "Landscape")
-                            : (viewModel.isArabic ? "عمودي" : "Portrait"),
-                        systemImage: "rotate.right"
-                    )
-                    .font(.subheadline.weight(.medium))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(BydColors.surfaceElevated)
-                    .foregroundColor(BydColors.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-
-                Button {
-                    pipController.updateStatus(
-                        viewModel.orientation == .landscape ? "BYD • أفقي" : "BYD • عمودي"
-                    )
-                    pipController.startPip()
-                } label: {
-                    Image(systemName: "pip.enter")
-                        .frame(width: 44, height: 44)
+            if isStreaming {
+                HStack(spacing: 10) {
+                    Button(action: viewModel.toggleOrientation) {
+                        Label(
+                            viewModel.orientation == .landscape
+                                ? (viewModel.isArabic ? "أفقي (تدوير)" : "Landscape")
+                                : (viewModel.isArabic ? "عمودي (تدوير)" : "Portrait"),
+                            systemImage: "rotate.right"
+                        )
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
                         .background(BydColors.surfaceElevated)
-                        .foregroundColor(BydColors.evCyan)
+                        .foregroundColor(BydColors.textPrimary)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
+                    }
 
-                if viewModel.hasBroadcastExtension {
-                    ReplayKitBroadcastButton(bundleIdentifier: "com.byd.mirror.app.broadcast")
-                        .frame(width: 52, height: 44)
-                        .background(BydColors.surfaceElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    if viewModel.hasBroadcastExtension {
+                        ReplayKitBroadcastButton(bundleIdentifier: "com.byd.mirror.app.broadcast")
+                            .frame(width: 52, height: 44)
+                            .background(BydColors.surfaceElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
-            }
-
-            if !viewModel.hasBroadcastExtension {
-                Text(
-                    viewModel.isArabic
-                        ? "وضع التثبيت المجاني ($0) • بث مباشر بدون شهادة مطور مدفوعة"
-                        : "Free Sideload Mode ($0) • Direct Capture Active"
-                )
-                .font(.caption2)
-                .foregroundColor(BydColors.evEmerald)
             }
         }
-        .padding(22)
+        .padding(24)
         .background(BydColors.surfaceCard)
         .overlay(
             RoundedRectangle(cornerRadius: 24)
@@ -269,213 +265,226 @@ public struct MirrorDashboardView: View {
         }
     }
 
-    private var streamSettingsCard: some View {
+    private var discoveredDevicesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(viewModel.isArabic ? "إعدادات البث والشاشة" : "Stream Codec & Display Size")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(BydColors.textPrimary)
+            HStack {
+                Text(
+                    viewModel.isArabic
+                        ? "شاشات BYD المتاحة (\(viewModel.discoveredDevices.count))"
+                        : "Available Screens (\(viewModel.discoveredDevices.count))"
+                )
+                .font(.caption.bold())
+                .foregroundColor(BydColors.textSecondary)
 
-            HStack(spacing: 8) {
-                chipButton(title: "H.265 (HEVC)", selected: viewModel.preferHevc, accent: BydColors.evCyan) {
-                    viewModel.setCodec(preferHevc: true)
-                }
-                chipButton(title: "H.264 (AVC)", selected: !viewModel.preferHevc, accent: BydColors.evCyan) {
-                    viewModel.setCodec(preferHevc: false)
+                Spacer()
+
+                Button {
+                    showManualIpAlert = true
+                } label: {
+                    Text(viewModel.isArabic ? "اتصال بـ IP يدوياً" : "Connect by IP")
+                        .font(.caption.bold())
+                        .foregroundColor(BydColors.evCyan)
                 }
             }
 
-            HStack(spacing: 8) {
-                let options: [(String, String)] = [
-                    ("auto", viewModel.isArabic ? "تلقائي" : "Auto"),
-                    (DisplayProfile.diLink15_6FHD.id, "15.6\""),
-                    (DisplayProfile.diLink12_8FHD.id, "12.8\""),
-                    (DisplayProfile.diLink10_1HD.id, "10.1\"")
-                ]
-                ForEach(options, id: \.0) { pid, title in
-                    chipButton(title: title, selected: viewModel.selectedProfileId == pid, accent: BydColors.evEmerald) {
-                        viewModel.selectProfile(id: pid)
+            if viewModel.discoveredDevices.isEmpty {
+                Text(
+                    viewModel.isArabic
+                        ? "1. افتح تطبيق BYD Receiver على شاشة السيارة.\n2. تأكد أن الآيفون والسيارة على نفس الشبكة أو نقطة الاتصال، ثم اضغط «اتصال بضغطة واحدة»."
+                        : "1. Open BYD Receiver on your car screen.\n2. Connect iPhone & car to the same Wi-Fi/Hotspot, then tap One-Tap Connect."
+                )
+                .font(.caption)
+                .foregroundColor(BydColors.textSecondary)
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(BydColors.surfaceCard)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(BydColors.borderSubtle, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            } else {
+                ForEach(viewModel.discoveredDevices) { device in
+                    Button {
+                        viewModel.prepareConnection(to: device)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(device.displayName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(BydColors.textPrimary)
+                                    if viewModel.isTrusted(deviceId: device.id) {
+                                        Text(viewModel.isArabic ? "محفوظة" : "Trusted")
+                                            .font(.caption2.bold())
+                                            .foregroundColor(BydColors.evEmerald)
+                                    }
+                                }
+                                Text("\(device.modelName) • \(device.hostAddress)")
+                                    .font(.caption)
+                                    .foregroundColor(BydColors.textSecondary)
+                            }
+                            Spacer()
+                            Text(viewModel.isArabic ? "ربط" : "Connect")
+                                .font(.subheadline.bold())
+                                .foregroundColor(BydColors.evCyan)
+                        }
+                        .padding(16)
+                        .background(BydColors.surfaceElevated)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
                     }
                 }
             }
         }
-        .padding(16)
-        .background(BydColors.surfaceCard)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(BydColors.borderSubtle, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var advancedSettingsSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(viewModel.isArabic ? "جودة الترميز" : "Video Codec")
+                            .font(.caption.bold())
+                            .foregroundColor(BydColors.textSecondary)
+                        HStack(spacing: 10) {
+                            chipButton(title: "H.265", selected: viewModel.preferHevc, accent: BydColors.evCyan) {
+                                viewModel.setCodec(preferHevc: true)
+                            }
+                            chipButton(title: "H.264", selected: !viewModel.preferHevc, accent: BydColors.evCyan) {
+                                viewModel.setCodec(preferHevc: false)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(viewModel.isArabic ? "حجم شاشة السيارة" : "Car Screen Size")
+                            .font(.caption.bold())
+                            .foregroundColor(BydColors.textSecondary)
+                        HStack(spacing: 8) {
+                            let options: [(String, String)] = [
+                                ("auto", viewModel.isArabic ? "تلقائي" : "Auto"),
+                                (DisplayProfile.diLink15_6FHD.id, "15.6\""),
+                                (DisplayProfile.diLink12_8FHD.id, "12.8\""),
+                                (DisplayProfile.diLink10_1HD.id, "10.1\"")
+                            ]
+                            ForEach(options, id: \.0) { pid, title in
+                                chipButton(title: title, selected: viewModel.selectedProfileId == pid, accent: BydColors.evEmerald) {
+                                    viewModel.selectProfile(id: pid)
+                                }
+                            }
+                        }
+                    }
+
+                    Toggle(isOn: $viewModel.autoConnectEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(viewModel.isArabic ? "الربط التلقائي" : "Auto-Connect")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(BydColors.textPrimary)
+                            Text(
+                                viewModel.isArabic
+                                    ? "اتصال تلقائي عند الاقتراب من السيارة"
+                                    : "Auto-link on BYD Wi-Fi"
+                            )
+                            .font(.caption)
+                            .foregroundColor(BydColors.textSecondary)
+                        }
+                    }
+                    .tint(BydColors.evCyan)
+
+                    Button {
+                        pipController.updateStatus(
+                            viewModel.orientation == .landscape ? "BYD • أفقي" : "BYD • عمودي"
+                        )
+                        pipController.startPip()
+                    } label: {
+                        Label(
+                            viewModel.isArabic ? "تشغيل نافذة التحكم المصغرة (PiP)" : "Open Mini PiP Controls",
+                            systemImage: "pip.enter"
+                        )
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(BydColors.surfaceElevated)
+                        .foregroundColor(BydColors.evCyan)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if !viewModel.trustedVehicles.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(
+                                viewModel.isArabic
+                                    ? "السيارات المحفوظة (\(viewModel.trustedVehicles.count))"
+                                    : "Saved Vehicles (\(viewModel.trustedVehicles.count))"
+                            )
+                            .font(.caption.bold())
+                            .foregroundColor(BydColors.textSecondary)
+
+                            ForEach(viewModel.trustedVehicles, id: \.id) { vehicle in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(vehicle.displayName)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundColor(BydColors.textPrimary)
+                                        Text("ID: \(vehicle.fingerprint)")
+                                            .font(.caption2)
+                                            .foregroundColor(BydColors.evEmerald)
+                                    }
+                                    Spacer()
+                                    Button {
+                                        viewModel.removeTrustedVehicle(deviceId: vehicle.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .foregroundColor(BydColors.dangerRed)
+                                    }
+                                }
+                                .padding(12)
+                                .background(BydColors.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.shield.fill")
+                            .foregroundColor(BydColors.evEmerald)
+                        Text(
+                            viewModel.isArabic
+                                ? "اتصال مشفر بالكامل ECDH P-256 + AES-256-GCM"
+                                : "End-to-end encrypted ECDH P-256"
+                        )
+                        .font(.caption)
+                        .foregroundColor(BydColors.evEmerald)
+                    }
+                }
+                .padding(20)
+            }
+            .background(BydColors.surfaceCard.ignoresSafeArea())
+            .navigationTitle(viewModel.isArabic ? "الإعدادات المتقدمة" : "Advanced Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(viewModel.isArabic ? "تم" : "Done") {
+                        showSettingsSheet = false
+                    }
+                    .foregroundColor(BydColors.evCyan)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
     }
 
     private func chipButton(title: String, selected: Bool, accent: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.caption.weight(.semibold))
+                .lineLimit(1)
                 .foregroundColor(selected ? accent : BydColors.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(selected ? accent.opacity(0.18) : BydColors.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
-    private var autoConnectSecurityCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: $viewModel.autoConnectEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(viewModel.isArabic ? "الربط التلقائي" : "Auto-Connect")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(BydColors.textPrimary)
-                    Text(
-                        viewModel.isArabic
-                            ? "تفعيل الاتصال عند دخول نطاق واي فاي BYD"
-                            : "Activate when entering BYD Wi-Fi range"
-                    )
-                    .font(.caption)
-                    .foregroundColor(BydColors.textSecondary)
-                }
-            }
-            .tint(BydColors.evCyan)
-
-            HStack(spacing: 8) {
-                Image(systemName: "lock.shield.fill")
-                    .foregroundColor(BydColors.evEmerald)
-                Text(
-                    viewModel.isArabic
-                        ? "تشفير القناة ECDH P-256 + AES-256-GCM"
-                        : "Encrypted ECDH P-256 + AES-256-GCM"
-                )
-                .font(.caption)
-                .foregroundColor(BydColors.evEmerald)
-            }
-        }
-        .padding(16)
-        .background(BydColors.surfaceCard)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(BydColors.borderSubtle, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var manualIpCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(viewModel.isArabic ? "الاتصال اليدوي عبر IP (عند حجب الاكتشاف)" : "Manual IP Connect (Bonjour Fallback)")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(BydColors.textPrimary)
-
-            HStack(spacing: 8) {
-                TextField("192.168.43.1", text: $viewModel.manualIpInput)
-                    .keyboardType(.numbersAndPunctuation)
-                    .autocorrectionDisabled()
-                    .padding(10)
-                    .background(BydColors.surfaceElevated)
-                    .foregroundColor(BydColors.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                Button(action: viewModel.connectManualIp) {
-                    Text(viewModel.isArabic ? "ربط" : "Connect")
-                        .font(.subheadline.bold())
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(BydColors.evCyan)
-                        .foregroundColor(Color(red: 4/255, green: 16/255, blue: 22/255))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                .disabled(viewModel.manualIpInput.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding(16)
-        .background(BydColors.surfaceCard)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(BydColors.borderSubtle, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var discoveredDevicesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(
-                viewModel.isArabic
-                    ? "الشاشات المكتشفة (\(viewModel.discoveredDevices.count))"
-                    : "Discovered Screens (\(viewModel.discoveredDevices.count))"
-            )
-            .font(.caption.bold())
-            .foregroundColor(BydColors.textSecondary)
-
-            ForEach(viewModel.discoveredDevices) { device in
-                Button {
-                    viewModel.prepareConnection(to: device)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(device.displayName)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(BydColors.textPrimary)
-                                if viewModel.isTrusted(deviceId: device.id) {
-                                    Text(viewModel.isArabic ? "موثوقة" : "Trusted")
-                                        .font(.caption2.bold())
-                                        .foregroundColor(BydColors.evEmerald)
-                                }
-                            }
-                            Text("\(device.modelName) • DiLink \(device.diLinkVersion)")
-                                .font(.caption)
-                                .foregroundColor(BydColors.textSecondary)
-                        }
-                        Spacer()
-                        Text(viewModel.isArabic ? "ربط" : "Connect")
-                            .font(.subheadline.bold())
-                            .foregroundColor(BydColors.evCyan)
-                    }
-                    .padding(14)
-                    .background(BydColors.surfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var trustedVehiclesSection: some View {
-        if !viewModel.trustedVehicles.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(
-                    viewModel.isArabic
-                        ? "السيارات الموثوقة (\(viewModel.trustedVehicles.count))"
-                        : "Trusted Vehicles (\(viewModel.trustedVehicles.count))"
-                )
-                .font(.caption.bold())
-                .foregroundColor(BydColors.textSecondary)
-
-                ForEach(viewModel.trustedVehicles, id: \.id) { vehicle in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(vehicle.displayName)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(BydColors.textPrimary)
-                            Text("Fingerprint: \(vehicle.fingerprint)")
-                                .font(.caption2)
-                                .foregroundColor(BydColors.evEmerald)
-                        }
-                        Spacer()
-                        Button {
-                            viewModel.removeTrustedVehicle(deviceId: vehicle.id)
-                        } label: {
-                            Image(systemName: "trash")
-                                .foregroundColor(BydColors.dangerRed)
-                        }
-                    }
-                    .padding(14)
-                    .background(BydColors.surfaceCard)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(BydColors.borderSubtle, lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-            }
         }
     }
 
@@ -483,9 +492,9 @@ public struct MirrorDashboardView: View {
         let (title, color): (String, Color) = {
             switch viewModel.connectionState {
             case .idle: return (viewModel.isArabic ? "جاهز" : "Ready", BydColors.textSecondary)
-            case .discovering: return (viewModel.isArabic ? "جاري البحث..." : "Scanning...", BydColors.evCyan)
+            case .discovering: return (viewModel.isArabic ? "جاري البحث" : "Scanning", BydColors.evCyan)
             case .handshaking, .keyExchange, .negotiatingQuality:
-                return (viewModel.isArabic ? "مصافحة آمنة" : "Securing", BydColors.warningAmber)
+                return (viewModel.isArabic ? "جاري الربط" : "Securing", BydColors.warningAmber)
             case .streaming: return (viewModel.isArabic ? "متصل" : "Live", BydColors.evEmerald)
             case .reconnecting: return (viewModel.isArabic ? "إعادة الربط" : "Reconnecting", BydColors.warningAmber)
             case .error: return (viewModel.isArabic ? "خطأ" : "Error", BydColors.dangerRed)
@@ -494,8 +503,9 @@ public struct MirrorDashboardView: View {
 
         return Text(title)
             .font(.caption.bold())
+            .lineLimit(1)
             .foregroundColor(color)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(color.opacity(0.16))
             .clipShape(Capsule())
@@ -504,19 +514,15 @@ public struct MirrorDashboardView: View {
     private var statusHeadline: String {
         switch viewModel.connectionState {
         case .idle:
-            return viewModel.isArabic ? "اضغط للبحث والربط مع شاشة BYD" : "Tap to scan & mirror to BYD screen"
+            return viewModel.isArabic ? "جاهز للربط مع شاشة BYD" : "Ready to mirror to BYD screen"
         case .discovering:
-            return viewModel.isArabic ? "جاري البحث عن شاشة BYD عبر Bonjour P2P..." : "Scanning for BYD screen via Bonjour P2P..."
-        case .handshaking(let device):
-            return viewModel.isArabic ? "مصافحة بروتوكول \(device.displayName)" : "Handshaking with \(device.displayName)"
-        case .keyExchange:
-            return viewModel.isArabic ? "تبادل مفاتيح التشفير ECDH P-256..." : "Exchanging ECDH P-256 keys..."
-        case .negotiatingQuality:
-            return viewModel.isArabic ? "ضبط الدقة المناسبة للشاشة..." : "Negotiating display quality..."
+            return viewModel.isArabic ? "جاري البحث عن شاشة السيارة..." : "Searching for your BYD screen..."
+        case .handshaking(let device), .keyExchange(let device), .negotiatingQuality(let device):
+            return viewModel.isArabic ? "جاري تأمين الاتصال مع \(device.displayName)..." : "Securing connection to \(device.displayName)..."
         case .streaming(let device, _, _, _):
-            return viewModel.isArabic ? "بث مباشر إلى \(device.displayName)" : "Streaming live to \(device.displayName)"
+            return viewModel.isArabic ? "الشاشة تبث الآن إلى \(device.displayName)" : "Mirroring live to \(device.displayName)"
         case .reconnecting(_, let attempt):
-            return viewModel.isArabic ? "إعادة الاتصال (محاولة \(attempt))" : "Reconnecting (Attempt \(attempt))"
+            return viewModel.isArabic ? "إعادة الاتصال بالسيارة (محاولة \(attempt))..." : "Reconnecting (Attempt \(attempt))..."
         case .error(let msg):
             return msg
         }
