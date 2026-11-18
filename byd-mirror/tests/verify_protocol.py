@@ -82,6 +82,8 @@ def main():
     assert "Activity.RESULT_OK" in kt_fg and "resultCode != -1" not in kt_fg, "MirrorForegroundService MediaProjection resultCode regression"
     kt_acc = (ROOT / "android/app/src/main/java/com/byd/mirror/service/BydTouchAccessibilityService.kt").read_text()
     assert "mainHandler.post" in kt_acc and "MAX_MOVE_POINTS" in kt_acc, "Accessibility touch thread-safety guard missing"
+    kt_p2p = (ROOT / "android/app/src/main/java/com/byd/mirror/core/network/WifiP2pTransport.kt").read_text()
+    assert "ContextCompat.registerReceiver" in kt_p2p, "WifiP2pTransport missing Android 14+ ContextCompat.registerReceiver flag"
 
     sw_transport = (ROOT / "ios/Sources/Core/Network/PeerTransportClient.swift").read_text()
     assert "generation &+= 1" in sw_transport, "iOS PeerTransportClient missing generation guard"

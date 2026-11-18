@@ -10,6 +10,7 @@ import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
+import androidx.core.content.ContextCompat
 import com.byd.mirror.core.model.BydDevice
 import com.byd.mirror.core.model.TransportType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,7 +69,12 @@ class WifiP2pTransport(private val context: Context) {
             addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
         }
-        context.registerReceiver(receiver, filter)
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            filter,
+            ContextCompat.RECEIVER_EXPORTED
+        )
     }
 
     @SuppressLint("MissingPermission")

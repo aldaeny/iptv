@@ -60,6 +60,11 @@ jobs:
             grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle-android.log | head -n 40 | while IFS= read -r line; do
               echo "::error::$line"
             done
+            if [ -f app/build/reports/lint-results-standardDebug.txt ]; then
+              grep -E "(Error:|Explanation:)" -A 2 app/build/reports/lint-results-standardDebug.txt | head -n 40 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+            fi
             exit 1
           fi
           sha256sum app/build/outputs/apk/standard/release/app-standard-release.apk app/build/outputs/apk/fullTouch/release/app-fullTouch-release.apk | tee SHA256SUMS-android.txt
