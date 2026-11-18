@@ -65,7 +65,7 @@ class ReceiverCryptoManager {
 
     fun decrypt(encryptedPayload: ByteArray, aadHeader: ByteArray): ByteArray {
         val key = requireNotNull(sessionKey) { "Session key not established" }
-        require(encryptedPayload.size > GCM_NONCE_BYTES + (GCM_TAG_BITS / 8))
+        require(encryptedPayload.size >= GCM_NONCE_BYTES + (GCM_TAG_BITS / 8))
         val nonce = encryptedPayload.copyOfRange(0, GCM_NONCE_BYTES)
         val body = encryptedPayload.copyOfRange(GCM_NONCE_BYTES, encryptedPayload.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

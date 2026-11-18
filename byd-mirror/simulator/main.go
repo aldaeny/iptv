@@ -534,7 +534,12 @@ func (s *SimulatorServer) startUDP() {
 			prev := int(s.lastUdpSeq.Load())
 			if prev != 0 && seq > prev+1 {
 				s.droppedWin.Add(int32(seq - prev - 1))
-				s.sendControl(s.tcpOut, opKeyframeRequest, nil)
+				s.tcpOutMu.Lock()
+				tc := s.tcpOut
+				s.tcpOutMu.Unlock()
+				if tc != nil && s.crypto.IsActive() {
+					s.sendControl(tc, opKeyframeRequest, nil)
+				}
 			}
 			if seq > prev {
 				s.lastUdpSeq.Store(int32(seq))
@@ -548,10 +553,12 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
+	s.tcpOutMu.Lock()
 	s.crypto.Reset()
 	s.reasm.Clear()
 	s.lastUdpSeq.Store(0)
 	s.tcpOut = conn
+	s.tcpOutMu.Unlock()
 
 	phoneName := "BYD Phone"
 	mime := "video/avc"
@@ -573,17 +580,17 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				s.stateMu.RLock()
 				cur := s.uiState
 				s.stateMu.RUnlock()
-				if cur.State == "streaming" {
+				if cur.State == "streaming" && s.crypto.IsActive() {
 					cur.FPS = fps
 					s.broadcastJSON(cur)
 					if fps == 0 {
 						s.sendControl(conn, opKeyframeRequest, nil)
 					}
+					tel := make([]byte, 8)
+					binary.BigEndian.PutUint32(tel[0:4], uint32(fps))
+					binary.BigEndian.PutUint32(tel[4:8], uint32(dropped))
+					s.sendControl(conn, opQosTelemetry, tel)
 				}
-				tel := make([]byte, 8)
-				binary.BigEndian.PutUint32(tel[0:4], uint32(fps))
-				binary.BigEndian.PutUint32(tel[4:8], uint32(dropped))
-				s.sendControl(conn, opQosTelemetry, tel)
 			}
 		}
 	}()

@@ -28,5 +28,11 @@ class ChannelCryptoManagerTest {
         val decrypted = bydScreenCrypto.decrypt(encrypted, aadHeader)
 
         assertArrayEquals(secretFrame, decrypted)
+
+        // Empty control frames (e.g. KEYFRAME_REQUEST, SESSION_STOP) are 28 bytes (12B nonce + 16B tag)
+        val emptyEncrypted = phoneCrypto.encrypt(ByteArray(0), aadHeader)
+        assertEquals(28, emptyEncrypted.size)
+        val emptyDecrypted = bydScreenCrypto.decrypt(emptyEncrypted, aadHeader)
+        assertEquals(0, emptyDecrypted.size)
     }
 }

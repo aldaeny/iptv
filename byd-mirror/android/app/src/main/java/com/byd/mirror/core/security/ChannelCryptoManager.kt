@@ -80,7 +80,7 @@ class ChannelCryptoManager {
 
     fun decrypt(encryptedPayload: ByteArray, aadHeader: ByteArray): ByteArray {
         val key = requireNotNull(sessionKey) { "Session key not established" }
-        require(encryptedPayload.size > GCM_NONCE_BYTES + (GCM_TAG_BITS / 8)) {
+        require(encryptedPayload.size >= GCM_NONCE_BYTES + (GCM_TAG_BITS / 8)) {
             "Encrypted payload too short"
         }
 

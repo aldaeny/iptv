@@ -21,5 +21,11 @@ class ReceiverCryptoTest {
         assertEquals(6, receiverCrypto.pairingPin.length)
         assertEquals(11, receiverCrypto.sessionFingerprint.length) // XX-XX-XX-XX
         assert(pubKey.isNotEmpty())
+
+        val aad = ByteArray(16) { it.toByte() }
+        val emptyEnc = receiverCrypto.encrypt(ByteArray(0), aad)
+        assertEquals(28, emptyEnc.size)
+        val emptyDec = receiverCrypto.decrypt(emptyEnc, aad)
+        assertEquals(0, emptyDec.size)
     }
 }
