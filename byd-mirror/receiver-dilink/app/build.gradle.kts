@@ -21,13 +21,32 @@ android {
             enableV1Signing = true
             enableV2Signing = true
         }
+        val releaseKeystorePath = System.getenv("BYD_KEYSTORE_PATH")
+        val releaseKeystorePassword = System.getenv("BYD_KEYSTORE_PASSWORD")
+        val releaseKeyAlias = System.getenv("BYD_KEY_ALIAS")
+        val releaseKeyPassword = System.getenv("BYD_KEY_PASSWORD")
+        if (!releaseKeystorePath.isNullOrBlank() &&
+            !releaseKeystorePassword.isNullOrBlank() &&
+            !releaseKeyAlias.isNullOrBlank() &&
+            !releaseKeyPassword.isNullOrBlank() &&
+            file(releaseKeystorePath).exists()
+        ) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             isDebuggable = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

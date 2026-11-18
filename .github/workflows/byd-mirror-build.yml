@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - "master"
       - "arena/**"
     paths:
       - "byd-mirror/**"
@@ -51,6 +52,26 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+      - name: Configure optional Android release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.BYD_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.BYD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.BYD_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.BYD_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            KEYSTORE_FILE="$RUNNER_TEMP/byd-release.jks"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
+            {
+              echo "BYD_KEYSTORE_PATH=$KEYSTORE_FILE"
+              echo "BYD_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
+              echo "BYD_KEY_ALIAS=$KEY_ALIAS"
+              echo "BYD_KEY_PASSWORD=$KEY_PASS"
+            } >> "$GITHUB_ENV"
+            echo "Configured Android production release keystore from GitHub Secrets."
+          else
+            echo "No release keystore secrets set; falling back to debug signing."
           fi
       - name: Test, lint & build Android Phone APKs
         working-directory: byd-mirror/android
@@ -103,6 +124,26 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+      - name: Configure optional Android release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.BYD_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.BYD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.BYD_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.BYD_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            KEYSTORE_FILE="$RUNNER_TEMP/byd-release.jks"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
+            {
+              echo "BYD_KEYSTORE_PATH=$KEYSTORE_FILE"
+              echo "BYD_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
+              echo "BYD_KEY_ALIAS=$KEY_ALIAS"
+              echo "BYD_KEY_PASSWORD=$KEY_PASS"
+            } >> "$GITHUB_ENV"
+            echo "Configured Android production release keystore from GitHub Secrets."
+          else
+            echo "No release keystore secrets set; falling back to debug signing."
           fi
       - name: Test, lint & build BYD DiLink Receiver APK
         working-directory: byd-mirror/receiver-dilink
