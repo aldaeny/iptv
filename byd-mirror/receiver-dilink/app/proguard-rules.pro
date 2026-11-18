@@ -1,0 +1,2 @@
+-keep class com.byd.receiver.** { *; }
+-dontwarn kotlinx.coroutines.**

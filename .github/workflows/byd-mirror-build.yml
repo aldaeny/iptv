@@ -1,0 +1,240 @@
+name: BYD Mirror Build & Test (Build-Only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "arena/**"
+    paths:
+      - "byd-mirror/**"
+      - ".github/workflows/byd-mirror-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run protocol, crypto, fuzz & loopback verification
+        run: |
+          set -o pipefail
+          python3 byd-mirror/tests/verify_protocol.py 2>&1 | tee byd-mirror/protocol-verify.log
+          node byd-mirror/tests/crypto_fuzz_suite.mjs 2>&1 | tee byd-mirror/crypto-fuzz.log
+      - name: Upload protocol & crypto test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-protocol-crypto-logs
+          path: |
+            byd-mirror/protocol-verify.log
+            byd-mirror/crypto-fuzz.log
+
+  build-android-phone:
+    runs-on: ubuntu-latest
+    needs: verify-protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Accept Android SDK licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+      - name: Test, lint & build Android Phone APKs
+        working-directory: byd-mirror/android
+        run: |
+          set -o pipefail
+          if ! gradle testStandardDebugUnitTest lintStandardDebug assembleStandardRelease assembleFullTouchRelease 2>&1 | tee gradle-android.log; then
+            grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle-android.log | head -n 40 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            if [ -f app/build/reports/lint-results-standardDebug.txt ]; then
+              grep -E "(Error:|Explanation:)" -A 2 app/build/reports/lint-results-standardDebug.txt | head -n 40 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+            fi
+            exit 1
+          fi
+          sha256sum app/build/outputs/apk/standard/release/app-standard-release.apk app/build/outputs/apk/fullTouch/release/app-fullTouch-release.apk | tee SHA256SUMS-android.txt
+      - name: Upload Android failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-phone-failure-logs
+          path: |
+            byd-mirror/android/gradle-android.log
+            byd-mirror/android/app/build/reports/
+      - name: Upload Phone APKs & checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-phone-release-apk
+          path: |
+            byd-mirror/android/app/build/outputs/apk/standard/release/app-standard-release.apk
+            byd-mirror/android/app/build/outputs/apk/fullTouch/release/app-fullTouch-release.apk
+            byd-mirror/android/SHA256SUMS-android.txt
+            byd-mirror/android/gradle-android.log
+
+  build-byd-receiver:
+    runs-on: ubuntu-latest
+    needs: verify-protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Accept Android SDK licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+      - name: Test, lint & build BYD DiLink Receiver APK
+        working-directory: byd-mirror/receiver-dilink
+        run: |
+          set -o pipefail
+          if ! gradle testDebugUnitTest lintDebug assembleRelease 2>&1 | tee gradle-receiver.log; then
+            grep -E "(^e: |FAILURE:|Exception|What went wrong:)" -A 3 gradle-receiver.log | head -n 40 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+          sha256sum app/build/outputs/apk/release/app-release.apk | tee SHA256SUMS-receiver.txt
+      - name: Upload Receiver failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-receiver-failure-logs
+          path: |
+            byd-mirror/receiver-dilink/gradle-receiver.log
+            byd-mirror/receiver-dilink/app/build/reports/
+      - name: Upload Receiver APK & checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-dilink-receiver-release-apk
+          path: |
+            byd-mirror/receiver-dilink/app/build/outputs/apk/release/app-release.apk
+            byd-mirror/receiver-dilink/SHA256SUMS-receiver.txt
+            byd-mirror/receiver-dilink/gradle-receiver.log
+
+  build-ios-check:
+    runs-on: macos-latest
+    needs: verify-protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Swift Package tests
+        working-directory: byd-mirror/ios
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee swift-test.log
+      - name: Install XcodeGen & build unsigned iOS targets
+        working-directory: byd-mirror/ios
+        run: |
+          set -o pipefail
+          brew install xcodegen
+          xcodegen generate --spec Project.yml
+          if ! xcodebuild -project BydWirelessMirror.xcodeproj \
+            -scheme BydWirelessMirror \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee xcodebuild.log; then
+            grep -E "(error:|fatal error:|BUILD FAILED)" xcodebuild.log | head -n 30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/BydWirelessMirror.app Payload/
+          zip -qry BydWirelessMirror-unsigned.ipa Payload
+          rm -rf Payload build
+
+          xcodegen generate --spec Project-free.yml
+          if ! xcodebuild -project BydWirelessMirrorFree.xcodeproj \
+            -scheme BydWirelessMirror \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-free \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee xcodebuild-free.log; then
+            grep -E "(error:|fatal error:|BUILD FAILED)" xcodebuild-free.log | head -n 30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R build-free/Build/Products/Release-iphoneos/BydWirelessMirror.app Payload/
+          zip -qry BydWirelessMirror-FreeSideload.ipa Payload
+          rm -rf Payload build-free
+          shasum -a 256 BydWirelessMirror-unsigned.ipa BydWirelessMirror-FreeSideload.ipa | tee SHA256SUMS-ios.txt
+      - name: Upload iOS failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-ios-failure-logs
+          path: |
+            byd-mirror/ios/swift-test.log
+            byd-mirror/ios/xcodebuild.log
+            byd-mirror/ios/xcodebuild-free.log
+      - name: Upload unsigned iOS IPAs & checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-ios-unsigned-ipa
+          path: |
+            byd-mirror/ios/BydWirelessMirror-unsigned.ipa
+            byd-mirror/ios/BydWirelessMirror-FreeSideload.ipa
+            byd-mirror/ios/SHA256SUMS-ios.txt
+            byd-mirror/ios/swift-test.log
+
+  build-windows-simulator:
+    runs-on: ubuntu-latest
+    needs: verify-protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: false
+      - name: Test & build Simulator binaries (Windows + Linux)
+        working-directory: byd-mirror/simulator
+        run: |
+          set -o pipefail
+          go test -race -v ./... 2>&1 | tee go-test.log
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o BydScreenSimulator-Windows.exe .
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o BydScreenSimulator-Linux .
+          sha256sum BydScreenSimulator-Windows.exe BydScreenSimulator-Linux | tee SHA256SUMS-simulator.txt
+      - name: Upload Go failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-simulator-failure-logs
+          path: byd-mirror/simulator/go-test.log
+      - name: Upload Simulator binaries & checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: byd-windows-simulator
+          path: |
+            byd-mirror/simulator/BydScreenSimulator-Windows.exe
+            byd-mirror/simulator/BydScreenSimulator-Linux
+            byd-mirror/simulator/SHA256SUMS-simulator.txt
+            byd-mirror/simulator/go-test.log
