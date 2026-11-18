@@ -762,8 +762,8 @@ private fun DeviceRow(device: BydDevice, isTrusted: Boolean, isArabic: Boolean, 
 private fun statusHeadline(state: ConnectionState, isArabic: Boolean): String = when (state) {
     is ConnectionState.Idle -> if (isArabic) "جاهز للربط مع شاشة BYD" else "Ready to mirror to BYD screen"
     is ConnectionState.Discovering -> if (isArabic) "جاري البحث عن شاشة السيارة..." else "Searching for your BYD screen..."
-    is ConnectionState.Handshaking,
-    is ConnectionState.KeyExchange,
+    is ConnectionState.Handshaking -> if (isArabic) "جاري تأمين الاتصال مع ${state.device.displayName}..." else "Securing connection to ${state.device.displayName}..."
+    is ConnectionState.KeyExchange -> if (isArabic) "جاري تأمين الاتصال مع ${state.device.displayName}..." else "Securing connection to ${state.device.displayName}..."
     is ConnectionState.NegotiatingQuality -> if (isArabic) "جاري تأمين الاتصال مع ${state.device.displayName}..." else "Securing connection to ${state.device.displayName}..."
     is ConnectionState.Streaming -> if (isArabic) "الشاشة تبث الآن إلى ${state.device.displayName}" else "Mirroring live to ${state.device.displayName}"
     is ConnectionState.Reconnecting -> if (isArabic) "إعادة الاتصال بالسيارة (محاولة ${state.attempt})..." else "Reconnecting (Attempt ${state.attempt})..."
