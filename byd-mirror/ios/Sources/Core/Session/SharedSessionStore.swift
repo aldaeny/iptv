@@ -114,7 +114,7 @@ public final class SharedSessionStore: @unchecked Sendable {
 
     public func loadStreamSettings() -> (preferHevc: Bool, profileId: String) {
         let hasHevcKey = defaults.object(forKey: Keys.preferHevc) != nil
-        let hevc = hasHevcKey ? defaults.bool(forKey: Keys.preferHevc) : true
+        let hevc = hasHevcKey ? defaults.bool(forKey: Keys.preferHevc) : false
         let pid = defaults.string(forKey: Keys.profileId) ?? "auto"
         return (hevc, pid)
     }

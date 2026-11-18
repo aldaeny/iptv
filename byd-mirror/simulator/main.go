@@ -38,6 +38,7 @@ const (
 	controlPort     = 47810
 	mediaUDPPort    = 47811
 	webUIPort       = 47812
+	beaconUDPPort   = 47813
 	magicBytes      = uint16(0x4259)
 	protocolVersion = byte(0x01)
 	headerSize      = 16
@@ -353,14 +354,27 @@ func NewSimulatorServer() *SimulatorServer {
 	}
 }
 
+func isVirtualAdapter(name string) bool {
+	low := strings.ToLower(name)
+	for _, kw := range []string{"vethernet", "hyper-v", "wsl", "virtualbox", "vmware", "docker", "vbox", "tailscale", "zerotier", "hamachi", "tun", "tap"} {
+		if strings.Contains(low, kw) {
+			return true
+		}
+	}
+	return false
+}
+
 func localIPv4s() []string {
-	var ips []string
+	var preferred, fallback []string
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return ips
+		return preferred
 	}
 	for _, iface := range ifaces {
 		if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 {
+			continue
+		}
+		if isVirtualAdapter(iface.Name) {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -370,12 +384,17 @@ func localIPv4s() []string {
 		for _, a := range addrs {
 			if ipnet, ok := a.(*net.IPNet); ok {
 				if v4 := ipnet.IP.To4(); v4 != nil && !v4.IsLinkLocalUnicast() {
-					ips = append(ips, v4.String())
+					s := v4.String()
+					if strings.HasPrefix(s, "192.168.") || strings.HasPrefix(s, "10.") {
+						preferred = append(preferred, s)
+					} else {
+						fallback = append(fallback, s)
+					}
 				}
 			}
 		}
 	}
-	return ips
+	return append(preferred, fallback...)
 }
 
 func (s *SimulatorServer) broadcastJSON(st UIState) {
@@ -606,7 +625,7 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			})
 		case opCapabilitiesReq:
 			_ = dimRe.FindString(string(payload))
-			s.sendControl(conn, opCapabilitiesResp, []byte("1920x1080@60|H265,H264"))
+			s.sendControl(conn, opCapabilitiesResp, []byte("1920x1080@60|H264"))
 		case opSessionStart:
 			if len(payload) > 0 {
 				mime = string(payload)
@@ -853,6 +872,59 @@ func (s *SimulatorServer) readWSLoop(client *wsClient, br *bufio.Reader) {
 	}
 }
 
+func startBeaconBroadcaster() {
+	go func() {
+		conn, err := net.ListenPacket("udp4", ":0")
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		msg := fmt.Sprintf(
+			`{"proto":"byd-mirror-v1","name":"Chinese EV Simulator","model":"BYD / Chinese EV","port":%d,"mediaPort":%d,"hevc":false}`,
+			controlPort, mediaUDPPort,
+		)
+		payload := []byte(msg)
+		globalAddr := &net.UDPAddr{IP: net.IPv4bcast, Port: beaconUDPPort}
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			_, _ = conn.WriteTo(payload, globalAddr)
+			if ifaces, err := net.Interfaces(); err == nil {
+				for _, iface := range ifaces {
+					if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 || isVirtualAdapter(iface.Name) {
+						continue
+					}
+					if addrs, err := iface.Addrs(); err == nil {
+						for _, a := range addrs {
+							if ipnet, ok := a.(*net.IPNet); ok {
+								if v4 := ipnet.IP.To4(); v4 != nil && len(ipnet.Mask) == 4 && !v4.IsLinkLocalUnicast() {
+									bcast := make(net.IP, 4)
+									for i := 0; i < 4; i++ {
+										bcast[i] = v4[i] | ^ipnet.Mask[i]
+									}
+									_, _ = conn.WriteTo(payload, &net.UDPAddr{IP: bcast, Port: beaconUDPPort})
+								}
+							}
+						}
+					}
+				}
+			}
+			<-ticker.C
+		}
+	}()
+}
+
+func ensureWindowsFirewall() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name=BYD Screen Simulator TCP", "dir=in", "action=allow", "protocol=TCP", "localport=47810").Run()
+	_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name=BYD Screen Simulator UDP", "dir=in", "action=allow", "protocol=UDP", "localport=47811,47813,5353").Run()
+}
+
 func openBrowser(url string) {
 	switch runtime.GOOS {
 	case "windows":
@@ -865,10 +937,12 @@ func openBrowser(url string) {
 }
 
 func main() {
+	ensureWindowsFirewall()
 	srv := NewSimulatorServer()
 	srv.startUDP()
 	srv.startTCP()
 	startMDNSResponder()
+	startBeaconBroadcaster()
 
 	webSub, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {

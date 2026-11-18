@@ -21,7 +21,7 @@ public final class MirrorViewModel: ObservableObject {
     @Published public var pendingPairing: PairingPrompt?
     @Published public private(set) var trustedVehicles: [TrustedVehicle] = []
     @Published public var isArabic: Bool = true
-    @Published public private(set) var preferHevc: Bool = true
+    @Published public private(set) var preferHevc: Bool = false
     @Published public private(set) var selectedProfileId: String = "auto"
     @Published public var manualIpInput: String = ""
 
@@ -100,6 +100,7 @@ public final class MirrorViewModel: ObservableObject {
         wireDirectSessionCallbacks()
         autoConnect.startMonitoring()
         thermalMonitor.startMonitoring()
+        discovery.startDiscovery()
     }
 
     private func wireDirectSessionCallbacks() {
@@ -157,6 +158,14 @@ public final class MirrorViewModel: ObservableObject {
 
         if let device = discoveredDevices.first {
             prepareConnection(to: device)
+        } else {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                guard let self,
+                      case .discovering = self.connectionState,
+                      let device = self.discoveredDevices.first else { return }
+                self.prepareConnection(to: device)
+            }
         }
     }
 

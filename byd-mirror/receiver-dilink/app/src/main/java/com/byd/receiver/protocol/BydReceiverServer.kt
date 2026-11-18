@@ -17,6 +17,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -52,6 +53,7 @@ class BydReceiverServer(
     private var targetSurface: Surface? = null
     private var serverJob: Job? = null
     private var udpJob: Job? = null
+    private var beaconJob: Job? = null
     private var qosJob: Job? = null
 
     private var encryptionActive = false
@@ -93,10 +95,26 @@ class BydReceiverServer(
         serverJob = scope.launch(Dispatchers.IO) {
             val server = ServerSocket(CONTROL_PORT).also { tcpServer = it }
             startUdpMediaLoop(scope)
+            startBeaconBroadcaster(scope)
             while (isActive) {
                 val client = runCatching { server.accept() }.getOrNull() ?: break
                 handleClient(client, scope)
             }
+        }
+    }
+
+    private fun startBeaconBroadcaster(scope: CoroutineScope) {
+        beaconJob = scope.launch(Dispatchers.IO) {
+            val socket = runCatching { DatagramSocket().apply { broadcast = true } }.getOrNull() ?: return@launch
+            val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":true}"""
+                .toByteArray(Charsets.UTF_8)
+            val bcastAddr = InetAddress.getByName("255.255.255.255")
+            val packet = DatagramPacket(payload, payload.size, bcastAddr, BEACON_UDP_PORT)
+            while (isActive) {
+                runCatching { socket.send(packet) }
+                delay(1_000L)
+            }
+            runCatching { socket.close() }
         }
     }
 
@@ -332,6 +350,7 @@ class BydReceiverServer(
 
     fun stop() {
         qosJob?.cancel()
+        beaconJob?.cancel()
         udpJob?.cancel()
         serverJob?.cancel()
         runCatching { udpSocket?.close() }
@@ -342,6 +361,7 @@ class BydReceiverServer(
     companion object {
         const val CONTROL_PORT = 47810
         const val MEDIA_UDP_PORT = 47811
+        const val BEACON_UDP_PORT = 47813
         private const val MAGIC_BYTES: Short = 0x4259
         private const val PROTOCOL_VERSION: Byte = 0x01
         private const val HEADER_SIZE_BYTES = 16

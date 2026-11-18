@@ -49,7 +49,7 @@ object MirrorSessionCoordinator {
     private val _activeProfile = MutableStateFlow(DisplayProfile.DILINK_15_6_FHD)
     val activeProfile: StateFlow<DisplayProfile> = _activeProfile.asStateFlow()
 
-    private val _preferredCodec = MutableStateFlow(VideoCodec.H265)
+    private val _preferredCodec = MutableStateFlow(VideoCodec.H264)
     val preferredCodec: StateFlow<VideoCodec> = _preferredCodec.asStateFlow()
 
     private val _profileOverride = MutableStateFlow<DisplayProfile?>(null)

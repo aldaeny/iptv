@@ -29,6 +29,7 @@ class ScreenCaptureEncoder(
     private var inputSurface: Surface? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var drainJob: Job? = null
+    private var codecConfigNalu: ByteArray? = null
 
     fun start(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int) {
         stop()
@@ -78,7 +79,17 @@ class ScreenCaptureEncoder(
                         val nalu = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
                         outBuffer.get(nalu)
-                        onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt())
+                        val isConfig = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                        val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+                        if (isConfig) {
+                            codecConfigNalu = nalu
+                            onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt())
+                        } else if (isKey && codecConfigNalu != null) {
+                            val combined = codecConfigNalu!! + nalu
+                            onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt())
+                        } else {
+                            onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt())
+                        }
                     }
                     mediaCodec.releaseOutputBuffer(index, false)
                 }

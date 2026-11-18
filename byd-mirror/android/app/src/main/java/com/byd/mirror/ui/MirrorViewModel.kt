@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MirrorViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -63,6 +65,7 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         wifiP2p.initialize()
+        nsdDiscovery.startDiscovery()
         autoConnectMonitor.startMonitoring()
         thermalManager.startMonitoring()
 
@@ -102,6 +105,15 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
         val firstKnown = discoveredDevices.value.firstOrNull()
         if (firstKnown != null) {
             connectToDevice(firstKnown)
+        } else {
+            viewModelScope.launch {
+                val found = withTimeoutOrNull(4_000L) {
+                    discoveredDevices.firstOrNull { it.isNotEmpty() }?.firstOrNull()
+                }
+                if (found != null && connectionState.value is ConnectionState.Discovering) {
+                    connectToDevice(found)
+                }
+            }
         }
     }
 

@@ -633,7 +633,7 @@
 
     function handleStateMsg(msg) {
       if (msg.ips && msg.ips.length) {
-        document.getElementById('ipDisplay').textContent = msg.ips.join('  /  ');
+        document.getElementById('ipDisplay').textContent = msg.ips[0];
       }
       if (msg.state === 'waiting') {
         document.getElementById('waitingCard').classList.remove('hidden');

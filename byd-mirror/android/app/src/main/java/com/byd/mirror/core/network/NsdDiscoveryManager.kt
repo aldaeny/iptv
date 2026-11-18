@@ -5,36 +5,49 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import com.byd.mirror.core.model.BydDevice
 import com.byd.mirror.core.model.TransportType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
 
 /**
- * Discovers BYD Wireless Mirroring sinks on the local car hotspot / Wi-Fi LAN
- * via Android Network Service Discovery (`_byd-mirror._tcp.`).
+ * Discovers BYD & Chinese EV Wireless Mirroring sinks on the local car hotspot / Wi-Fi LAN
+ * via BOTH Android NSD (`_byd-mirror._tcp.`) AND zero-config UDP Discovery Beacon (port 47813).
  */
 class NsdDiscoveryManager(context: Context) {
 
     private val nsdManager: NsdManager? =
         context.getSystemService(Context.NSD_SERVICE) as? NsdManager
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _services = MutableStateFlow<List<BydDevice>>(emptyList())
     val services: StateFlow<List<BydDevice>> = _services.asStateFlow()
 
     private var activeDiscoveryListener: NsdManager.DiscoveryListener? = null
+    private var beaconJob: Job? = null
+    private var beaconSocket: DatagramSocket? = null
 
     fun startDiscovery() {
         stopDiscovery()
+        startNsdDiscovery()
+        startUdpBeaconListener()
+    }
+
+    private fun startNsdDiscovery() {
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) = Unit
             override fun onDiscoveryStopped(serviceType: String) = Unit
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                stopDiscovery()
-            }
-
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                stopDiscovery()
-            }
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (serviceInfo.serviceType.contains("_byd-mirror")) {
@@ -47,7 +60,50 @@ class NsdDiscoveryManager(context: Context) {
             }
         }
         activeDiscoveryListener = listener
-        nsdManager?.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        runCatching {
+            nsdManager?.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        }
+    }
+
+    private fun startUdpBeaconListener() {
+        beaconJob = scope.launch {
+            runCatching {
+                val sock = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(BEACON_UDP_PORT))
+                }
+                beaconSocket = sock
+                val buf = ByteArray(1024)
+                val pkt = DatagramPacket(buf, buf.size)
+                while (isActive) {
+                    sock.receive(pkt)
+                    val host = pkt.address?.hostAddress ?: continue
+                    val raw = String(pkt.data, 0, pkt.length, Charsets.UTF_8)
+                    val json = runCatching { JSONObject(raw) }.getOrNull() ?: continue
+                    if (json.optString("proto") != "byd-mirror-v1") continue
+                    val name = json.optString("name", "BYD DiLink")
+                    val model = json.optString("model", "BYD / Chinese EV")
+                    val ctrlPort = json.optInt("port", 47810)
+                    val mediaPort = json.optInt("mediaPort", 47811)
+                    val supportsHevc = json.optBoolean("hevc", false)
+                    upsertDevice(
+                        BydDevice(
+                            id = "beacon-$host",
+                            displayName = name,
+                            modelName = model,
+                            diLinkVersion = "5.0",
+                            hostAddress = host,
+                            controlPort = ctrlPort,
+                            mediaPort = mediaPort,
+                            transportType = TransportType.LAN_NSD,
+                            supportsRotatingScreen = true,
+                            supportsHevc = supportsHevc
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private fun resolveService(info: NsdServiceInfo) {
@@ -59,19 +115,25 @@ class NsdDiscoveryManager(context: Context) {
                 val host = resolved.host?.hostAddress ?: return
                 val diLinkVersion = resolved.attributes["dilink"]?.decodeToString() ?: "4.0"
                 val model = resolved.attributes["model"]?.decodeToString() ?: "BYD DiLink"
-                val device = BydDevice(
-                    id = "${resolved.serviceName}@$host",
-                    displayName = resolved.serviceName,
-                    modelName = model,
-                    diLinkVersion = diLinkVersion,
-                    hostAddress = host,
-                    controlPort = resolved.port,
-                    transportType = TransportType.LAN_NSD
+                upsertDevice(
+                    BydDevice(
+                        id = "${resolved.serviceName}@$host",
+                        displayName = resolved.serviceName,
+                        modelName = model,
+                        diLinkVersion = diLinkVersion,
+                        hostAddress = host,
+                        controlPort = resolved.port,
+                        transportType = TransportType.LAN_NSD
+                    )
                 )
-                val updated = _services.value.filterNot { it.id == device.id } + device
-                _services.value = updated
             }
         })
+    }
+
+    private fun upsertDevice(device: BydDevice) {
+        val current = _services.value
+        if (current.any { it.hostAddress == device.hostAddress && it.displayName == device.displayName }) return
+        _services.value = current.filterNot { it.hostAddress == device.hostAddress } + device
     }
 
     fun stopDiscovery() {
@@ -79,9 +141,14 @@ class NsdDiscoveryManager(context: Context) {
             runCatching { nsdManager?.stopServiceDiscovery(listener) }
         }
         activeDiscoveryListener = null
+        beaconJob?.cancel()
+        beaconJob = null
+        runCatching { beaconSocket?.close() }
+        beaconSocket = null
     }
 
     companion object {
         const val SERVICE_TYPE = "_byd-mirror._tcp."
+        const val BEACON_UDP_PORT = 47813
     }
 }
