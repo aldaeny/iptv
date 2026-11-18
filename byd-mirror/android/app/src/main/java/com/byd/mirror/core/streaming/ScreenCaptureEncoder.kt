@@ -8,6 +8,8 @@ import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import com.byd.mirror.core.model.DisplayOrientation
 import com.byd.mirror.core.model.DisplayProfile
@@ -19,20 +21,36 @@ import kotlinx.coroutines.launch
 
 /**
  * Hardware-accelerated low-latency screen encoder using MediaProjection -> Surface -> MediaCodec.
+ * Registers MediaProjection.Callback (mandatory on Android 14+ / API 34+) and caches SPS/PPS
+ * codec config so every IDR keyframe is self-contained.
  */
 class ScreenCaptureEncoder(
     private val mediaProjection: MediaProjection,
     private val scope: CoroutineScope,
-    private val onEncodedNalu: suspend (ByteArray, Int) -> Unit
+    private val onEncodedNalu: suspend (ByteArray, Int) -> Unit,
+    private val onProjectionStopped: () -> Unit = {}
 ) {
     private var codec: MediaCodec? = null
     private var inputSurface: Surface? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var drainJob: Job? = null
     private var codecConfigNalu: ByteArray? = null
+    private var callbackRegistered = false
+
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            stop()
+            onProjectionStopped()
+        }
+    }
 
     fun start(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int) {
         stop()
+        if (!callbackRegistered) {
+            mediaProjection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
+            callbackRegistered = true
+        }
+
         val (width, height) = profile.dimensionsFor(orientation)
         val format = MediaFormat.createVideoFormat(profile.codec.mimeType, width, height).apply {
             setInteger(
@@ -41,8 +59,8 @@ class ScreenCaptureEncoder(
             )
             setInteger(MediaFormat.KEY_BIT_RATE, profile.bitrateMbps * 1_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            setInteger(MediaFormat.KEY_PRIORITY, 0) // Real-time encoding priority
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
@@ -72,7 +90,7 @@ class ScreenCaptureEncoder(
         drainJob = scope.launch(Dispatchers.Default) {
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = mediaCodec.dequeueOutputBuffer(bufferInfo, 10_000L)
+                val index = runCatching { mediaCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrDefault(-1)
                 if (index >= 0) {
                     val outBuffer = mediaCodec.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
@@ -83,15 +101,15 @@ class ScreenCaptureEncoder(
                         val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
                         if (isConfig) {
                             codecConfigNalu = nalu
-                            onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt())
+                            runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         } else if (isKey && codecConfigNalu != null) {
                             val combined = codecConfigNalu!! + nalu
-                            onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt())
+                            runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
                         } else {
-                            onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt())
+                            runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         }
                     }
-                    mediaCodec.releaseOutputBuffer(index, false)
+                    runCatching { mediaCodec.releaseOutputBuffer(index, false) }
                 }
             }
         }
@@ -125,5 +143,13 @@ class ScreenCaptureEncoder(
         codec = null
         runCatching { inputSurface?.release() }
         inputSurface = null
+    }
+
+    fun releaseProjection() {
+        stop()
+        if (callbackRegistered) {
+            runCatching { mediaProjection.unregisterCallback(projectionCallback) }
+            callbackRegistered = false
+        }
     }
 }

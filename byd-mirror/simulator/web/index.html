@@ -367,6 +367,7 @@
     let nextAudioTime = 0;
     let configuredCodec = null;
     let waitingForKey = true;
+    let frameCounter = 0;
 
     const canvas = document.getElementById('videoCanvas');
     const ctx = canvas.getContext('2d');
@@ -497,9 +498,27 @@
       }, 33);
     }
 
-    function initVideoDecoder(mime) {
+    function extractAvcCodecFromSps(nalu) {
+      for (let i = 0; i < nalu.length - 7; i++) {
+        let startLen = 0;
+        if (nalu[i] === 0 && nalu[i+1] === 0 && nalu[i+2] === 1) startLen = 3;
+        else if (nalu[i] === 0 && nalu[i+1] === 0 && nalu[i+2] === 0 && nalu[i+3] === 1) startLen = 4;
+        if (startLen > 0) {
+          const nalType = nalu[i + startLen] & 0x1F;
+          if (nalType === 7 && i + startLen + 3 < nalu.length) {
+            const p = nalu[i + startLen + 1].toString(16).padStart(2, '0');
+            const c = nalu[i + startLen + 2].toString(16).padStart(2, '0');
+            const l = nalu[i + startLen + 3].toString(16).padStart(2, '0');
+            return `avc1.${p}${c}${l}`;
+          }
+        }
+      }
+      return null;
+    }
+
+    function initVideoDecoder(mime, overrideCodec) {
       if (!('VideoDecoder' in window)) return;
-      const codec = mime.includes('hevc') ? 'hvc1.1.6.L120.90' : 'avc1.42E01F';
+      const codec = overrideCodec || (mime.includes('hevc') ? 'hvc1.1.6.L120.90' : 'avc1.42002A');
       if (configuredCodec === codec && videoDecoder && videoDecoder.state === 'configured') return;
       configuredCodec = codec;
       waitingForKey = true;
@@ -536,10 +555,10 @@
           const hdr = nalu[i + startLen];
           if (mime.includes('hevc')) {
             const nalType = (hdr >> 1) & 0x3F;
-            if (nalType === 19 || nalType === 20 || nalType === 32) return true;
+            if (nalType === 19 || nalType === 20) return true;
           } else {
             const nalType = hdr & 0x1F;
-            if (nalType === 5 || nalType === 7) return true;
+            if (nalType === 5) return true;
           }
         }
       }
@@ -605,22 +624,32 @@
         const buf = new Uint8Array(ev.data);
         if (buf.length < 10) return;
         const kind = buf[0];
-        const tsUs = Number(new DataView(buf.buffer, buf.byteOffset + 1, 8).getBigInt64(0));
         const payload = buf.subarray(9);
-        if (kind === 1 && videoDecoder && videoDecoder.state === 'configured') {
+        if (kind === 1) {
           const mime = configuredCodec && configuredCodec.startsWith('hvc1') ? 'video/hevc' : 'video/avc';
+          if (mime === 'video/avc') {
+            const spsCodec = extractAvcCodecFromSps(payload);
+            if (spsCodec && spsCodec !== configuredCodec) {
+              initVideoDecoder('video/avc', spsCodec);
+            }
+          }
+          if (!videoDecoder || videoDecoder.state !== 'configured') return;
           const key = isKeyFrame(payload, mime);
           if (waitingForKey && !key) return;
           waitingForKey = false;
           try {
+            frameCounter++;
             videoDecoder.decode(new EncodedVideoChunk({
               type: key ? 'key' : 'delta',
-              timestamp: tsUs,
+              timestamp: frameCounter * 16667,
               data: payload
             }));
-          } catch (_) {}
+          } catch (_) {
+            waitingForKey = true;
+          }
         } else if (kind === 2 && audioDecoder && audioDecoder.state === 'configured') {
           try {
+            const tsUs = Math.max(0, Number(new DataView(buf.buffer, buf.byteOffset + 1, 8).getBigInt64(0)));
             audioDecoder.decode(new EncodedAudioChunk({
               type: 'key',
               timestamp: tsUs,

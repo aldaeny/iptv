@@ -576,6 +576,9 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				if cur.State == "streaming" {
 					cur.FPS = fps
 					s.broadcastJSON(cur)
+					if fps == 0 {
+						s.sendControl(conn, opKeyframeRequest, nil)
+					}
 				}
 				tel := make([]byte, 8)
 				binary.BigEndian.PutUint32(tel[0:4], uint32(fps))
@@ -646,6 +649,7 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				IsLandscape: isLandscape,
 				FPS:         60,
 			})
+			s.sendControl(conn, opKeyframeRequest, nil)
 		case opOrientationChange:
 			isLandscape = len(payload) > 0 && payload[0] == 0x01
 			_, fp := s.crypto.Info()

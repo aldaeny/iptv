@@ -82,6 +82,9 @@ class MirrorForegroundService : Service() {
             scope = serviceScope,
             onEncodedNalu = { nalu, ptsUs ->
                 protocol.sendVideoFrame(nalu, ptsUs)
+            },
+            onProjectionStopped = {
+                stopSelf()
             }
         ).apply {
             start(
@@ -119,7 +122,7 @@ class MirrorForegroundService : Service() {
         MirrorSessionCoordinator.onReconfigureEncoder = null
         MirrorSessionCoordinator.onStopServices = null
         audioEncoder?.stop()
-        videoEncoder?.stop()
+        videoEncoder?.releaseProjection()
         mediaProjection?.stop()
         serviceScope.launch { MirrorSessionCoordinator.disconnect() }
         serviceScope.cancel()

@@ -75,6 +75,9 @@ class BydProtocolWrapper(
     private var inputStream: DataInputStream? = null
     private var controlReaderJob: Job? = null
     private var encryptionActive = false
+    private val sentVideoFrames = AtomicInteger(0)
+    @Volatile
+    private var useTcpMediaFallback = false
 
     suspend fun connectAndHandshake(
         device: BydDevice,
@@ -84,6 +87,8 @@ class BydProtocolWrapper(
             runCatching { udpMediaSocket?.close() }
             runCatching { controlSocket?.close() }
             sequenceCounter.set(0)
+            sentVideoFrames.set(0)
+            useTcpMediaFallback = false
             encryptionActive = false
             cryptoManager.reset()
 
@@ -173,7 +178,13 @@ class BydProtocolWrapper(
                     ProtocolOpcode.QOS_TELEMETRY -> {
                         if (packet.payload.size >= 8) {
                             val buf = ByteBuffer.wrap(packet.payload).order(ByteOrder.BIG_ENDIAN)
-                            onQosReport(buf.int, buf.int)
+                            val rxFps = buf.int
+                            val dropped = buf.int
+                            if (rxFps == 0 && !useTcpMediaFallback && sentVideoFrames.get() >= 15) {
+                                useTcpMediaFallback = true
+                                onKeyframeRequested()
+                            }
+                            onQosReport(rxFps, dropped)
                         }
                     }
                     ProtocolOpcode.HEARTBEAT_PONG -> {
@@ -251,10 +262,13 @@ class BydProtocolWrapper(
     }
 
     private fun sendMediaUdp(opcode: ProtocolOpcode, rawPayload: ByteArray, timestampUs: Int) {
+        if (opcode == ProtocolOpcode.VIDEO_NALU) {
+            sentVideoFrames.incrementAndGet()
+        }
         val udp = udpMediaSocket
         val addr = targetMediaAddr
-        if (udp == null || addr == null) {
-            sendFrame(opcode, rawPayload, timestampUs, encrypt = encryptionActive)
+        if (useTcpMediaFallback || udp == null || addr == null) {
+            sendMediaTcp(opcode, rawPayload, timestampUs)
             return
         }
 
@@ -278,6 +292,28 @@ class BydProtocolWrapper(
         }
 
         dispatchUdpPacket(udp, addr, opcode, rawPayload, timestampUs)
+    }
+
+    private fun sendMediaTcp(opcode: ProtocolOpcode, rawPayload: ByteArray, timestampUs: Int) {
+        if (opcode == ProtocolOpcode.VIDEO_NALU && rawPayload.size > TCP_CHUNK_LIMIT_BYTES) {
+            val frameId = frameIdCounter.incrementAndGet()
+            val totalFrags = (rawPayload.size + TCP_CHUNK_LIMIT_BYTES - 1) / TCP_CHUNK_LIMIT_BYTES
+            for (fragIdx in 0 until totalFrags) {
+                val start = fragIdx * TCP_CHUNK_LIMIT_BYTES
+                val end = minOf(rawPayload.size, start + TCP_CHUNK_LIMIT_BYTES)
+                val chunkLen = end - start
+                val fragPayload = ByteBuffer.allocate(8 + chunkLen)
+                    .order(ByteOrder.BIG_ENDIAN)
+                    .putInt(frameId)
+                    .putShort(fragIdx.toShort())
+                    .putShort(totalFrags.toShort())
+                    .put(rawPayload, start, chunkLen)
+                    .array()
+                sendFrame(ProtocolOpcode.VIDEO_NALU_FRAG, fragPayload, timestampUs, encrypt = encryptionActive)
+            }
+            return
+        }
+        sendFrame(opcode, rawPayload, timestampUs, encrypt = encryptionActive)
     }
 
     private fun dispatchUdpPacket(
@@ -377,6 +413,7 @@ class BydProtocolWrapper(
         const val HEADER_SIZE_BYTES = 16
         const val ENCRYPTION_OVERHEAD_BYTES = 28 // 12-byte GCM nonce + 16-byte auth tag
         const val UDP_CHUNK_LIMIT_BYTES = 1_150 // Keeps encrypted UDP packet safely below 1500B MTU
+        const val TCP_CHUNK_LIMIT_BYTES = 32_000
         const val MAX_PAYLOAD_BYTES = 65_536
         private const val CONNECT_TIMEOUT_MS = 4_000
         private const val HANDSHAKE_READ_TIMEOUT_MS = 6_000
