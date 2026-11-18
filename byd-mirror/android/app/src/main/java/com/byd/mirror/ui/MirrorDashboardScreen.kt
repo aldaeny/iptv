@@ -451,9 +451,9 @@ fun MirrorDashboardScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isArabic) "ربط شاشة BYD" else "BYD Mirror",
+                    text = if (isArabic) "شاشة BYD" else "BYD Mirror",
                     color = BydColors.TextPrimary,
-                    fontSize = 22.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

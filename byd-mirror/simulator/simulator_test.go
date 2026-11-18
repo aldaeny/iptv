@@ -26,6 +26,10 @@ func TestHandshakeRawX963AndSpki(t *testing.T) {
 	if err != nil {
 		t.Fatalf("X9.63 handshake failed: %v", err)
 	}
+	if sim.IsActive() {
+		t.Fatal("crypto must stay inactive until KEY_EXCHANGE_RESP is sent in plaintext")
+	}
+	sim.Activate()
 	if len(resp) != 16+65 {
 		t.Fatalf("expected 81 bytes for X9.63 response, got %d", len(resp))
 	}

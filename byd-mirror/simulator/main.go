@@ -186,10 +186,16 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	c.aead = aead
 	c.fingerprint = fp
 	c.pin = pin
-	c.active = true
+	c.active = false // Activated right after KEY_EXCHANGE_RESP is sent in plaintext
 	c.mu.Unlock()
 
 	return append(salt, localPubOut...), nil
+}
+
+func (c *CryptoSession) Activate() {
+	c.mu.Lock()
+	c.active = true
+	c.mu.Unlock()
 }
 
 func (c *CryptoSession) Encrypt(plain, aad []byte) ([]byte, error) {
@@ -615,6 +621,7 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				break
 			}
 			s.sendControl(conn, opKeyExchangeResp, resp)
+			s.crypto.Activate()
 			pin, fp := s.crypto.Info()
 			s.broadcastJSON(UIState{
 				State:       "pairing",
@@ -661,9 +668,13 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 
 done:
 	close(stopQos)
-	s.tcpOut = nil
-	s.crypto.Reset()
-	s.broadcastJSON(UIState{State: "waiting", IsLandscape: true})
+	s.tcpOutMu.Lock()
+	if s.tcpOut == conn {
+		s.tcpOut = nil
+		s.crypto.Reset()
+		s.broadcastJSON(UIState{State: "waiting", IsLandscape: true})
+	}
+	s.tcpOutMu.Unlock()
 	_ = conn.Close()
 }
 
@@ -678,7 +689,13 @@ func (s *SimulatorServer) startTCP() {
 			if err != nil {
 				return
 			}
-			s.handleTCPClient(c)
+			s.tcpOutMu.Lock()
+			prev := s.tcpOut
+			s.tcpOutMu.Unlock()
+			if prev != nil {
+				_ = prev.Close()
+			}
+			go s.handleTCPClient(c)
 		}
 	}()
 }

@@ -81,8 +81,15 @@ class BydProtocolWrapper(
         preferredProfile: DisplayProfile
     ): Result<HandshakeResult> = withContext(Dispatchers.IO) {
         runCatching {
+            runCatching { udpMediaSocket?.close() }
+            runCatching { controlSocket?.close() }
+            sequenceCounter.set(0)
+            encryptionActive = false
+            cryptoManager.reset()
+
             val socket = Socket()
             socket.tcpNoDelay = true
+            socket.soTimeout = HANDSHAKE_READ_TIMEOUT_MS
             socket.connect(InetSocketAddress(device.hostAddress, device.controlPort), CONNECT_TIMEOUT_MS)
             controlSocket = socket
             outputStream = DataOutputStream(socket.getOutputStream())
@@ -123,10 +130,20 @@ class BydProtocolWrapper(
                 "Capabilities negotiation failed"
             }
 
+            socket.soTimeout = 0
             HandshakeResult(
                 fingerprint = cryptoManager.sessionFingerprint,
                 pairingPin = cryptoManager.pairingPin
             )
+        }.onFailure {
+            encryptionActive = false
+            cryptoManager.reset()
+            runCatching { udpMediaSocket?.close() }
+            runCatching { controlSocket?.close() }
+            udpMediaSocket = null
+            controlSocket = null
+            outputStream = null
+            inputStream = null
         }
     }
 
@@ -362,5 +379,6 @@ class BydProtocolWrapper(
         const val UDP_CHUNK_LIMIT_BYTES = 1_150 // Keeps encrypted UDP packet safely below 1500B MTU
         const val MAX_PAYLOAD_BYTES = 65_536
         private const val CONNECT_TIMEOUT_MS = 4_000
+        private const val HANDSHAKE_READ_TIMEOUT_MS = 6_000
     }
 }
