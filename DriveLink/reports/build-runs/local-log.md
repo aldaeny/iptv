@@ -33,3 +33,50 @@ PASS  manifest permissions and flavour separation intact
 
 ALL SOURCE RELEASE GATES PASSED
 ```
+
+---
+
+## Attempt log — branch `arena/1b4c9e45-iptv` (hardening round)
+
+Base: `a3b2e8c` (master tip after PR #5). Goal: close the two publication gaps,
+then run the real build. Every line below is the observed result, not a plan.
+
+| # | Action | Observed result | Consequence |
+|---|---|---|---|
+| 1 | `gh api repos/aldaeny/iptv/actions/permissions` | `HTTP 403 Resource not accessible by integration` | token cannot read or change the Actions policy |
+| 2 | `gh secret list` | `HTTP 403 Resource not accessible by integration` | signing secrets cannot be confirmed from here |
+| 3 | `gh api .../actions/workflows` | workflows `active`; ids 422155327 / 423712396 / 424165426 | files are registered, repo-level switch is off |
+| 4 | `gh workflow run drivelink-android-release.yml --ref arena/1b4c9e45-iptv` | `HTTP 422: Actions has been disabled for this repository` | **build still blocked — owner action required** |
+| 5 | local toolchain probe (`java`, `gradle`, `sdkmanager`, `aapt`, `apksigner`, `go`, `xcodebuild`, `adb`) | all `MISSING` | no local substitute for CI |
+| 6 | `find . -name '*.apk' -o -name '*.aab' -o -name '*.ipa'` | no output | no artifact exists anywhere in the tree |
+| 7 | `python3 DriveLink/tests/verify_release.py` | `ALL SOURCE RELEASE GATES PASSED` (11 gates) | source is release-ready |
+| 8 | `python3 DriveLink/tests/publish_guard_selftest.py` | `PASSED (10 scenarios)` | publication guard is proven to fail closed |
+
+### What was fixed in this round (code, not reports)
+
+* Signed and unsigned builds no longer share an artifact name:
+  `drivelink-release-<sha>` only when a keystore was configured, otherwise
+  `drivelink-unsigned-<sha>` (step `signmode`).
+* `drivelink-publish-release.yml` now refuses, in order: non-numeric `run_id`,
+  a run from another repository, a run that did not succeed, a non-dispatch run,
+  a run older than `MAX_RUN_AGE_DAYS` (14), a run whose `head_branch` is not
+  `master`, a `head_sha` that is not an ancestor of `origin/master`, a `head_sha`
+  that is not the current `origin/master` tip, and a missing/expired
+  `drivelink-release-<sha>` artifact. It then detaches to that exact commit and
+  re-runs the source gate before publishing.
+* Gate 11 in `verify_release.py` pins every one of those checks and the
+  signed/unsigned separation, so a regression fails CI instead of silently
+  weakening publication.
+
+### Still the only blockers to real APKs
+
+1. Repository owner: Settings → Actions → General → **Allow all actions and
+   reusable workflows**.
+2. Repository owner: add secrets `DRIVELINK_KEYSTORE_BASE64`,
+   `DRIVELINK_KEYSTORE_PASSWORD`, `DRIVELINK_KEY_ALIAS`, `DRIVELINK_KEY_PASSWORD`
+   and the variable `DRIVELINK_SIGNER_SHA256`.
+3. Then: dispatch `DriveLink CI & Android Release Build` on `master`, and once it
+   is green dispatch `DriveLink Publish Release` with its `run_id`.
+
+Nothing in this round produced an APK, a signature, a SHA-256 or an install
+result, so the release status remains **NO-GO**.
