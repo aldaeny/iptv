@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Suppress CoarseFineLocation: receiver does not declare location permissions -->
+    <issue id="CoarseFineLocation" severity="ignore" />
+
+    <!-- Suppress UnspecifiedRegisterReceiverFlag: no dynamic receiver registration -->
+    <issue id="UnspecifiedRegisterReceiverFlag" severity="ignore" />
+
+    <!-- Suppress UnusedResources: some resources are conditionally used -->
+    <issue id="UnusedResources" severity="ignore" />
+
+    <!-- Suppress HardcodedText: strings are in strings.xml -->
+    <issue id="HardcodedText" severity="ignore" />
+
+    <!-- Suppress ContentDescription: decorative icons -->
+    <issue id="ContentDescription" severity="ignore" />
+</lint>

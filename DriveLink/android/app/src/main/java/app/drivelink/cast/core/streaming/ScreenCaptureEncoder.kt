@@ -114,7 +114,8 @@ class ScreenCaptureEncoder(
                             codecConfigNalu = nalu
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         } else if (isKey && codecConfigNalu != null) {
-                            val combined = codecConfigNalu!! + nalu
+                            // Smart cast: codecConfigNalu is non-null here due to the check above
+                            val combined = codecConfigNalu + nalu
                             runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
                         } else {
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
