@@ -10,6 +10,11 @@ name: DriveLink CI & Android Release Build
 
 on:
   workflow_dispatch:
+    inputs:
+      previous_run:
+        description: Optional previous DriveLink run ID for emulator failure diagnosis
+        type: string
+        required: false
   pull_request:
     paths:
       - "DriveLink/**"
@@ -33,6 +38,27 @@ env:
   ANDROID_BUILD_TOOLS: "35.0.0"
 
 jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' && inputs.previous_run != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Inspect the archived smoke-test step (no signing inputs)
+        env:
+          RUN_ID: ${{ inputs.previous_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ $RUN_ID =~ ^[0-9]{6,20}$ ]]
+          base="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          gh api "$base" | jq -e --arg repo "$GITHUB_REPOSITORY" '.head_repository.full_name == $repo and .path == ".github/workflows/drivelink-android-release.yml" and .event == "workflow_dispatch"' >/dev/null
+          gh api "$base/logs" > "$RUNNER_TEMP/run-logs.zip"
+          python3 DriveLink/ci/diagnose_emulator.py "$RUNNER_TEMP/run-logs.zip"
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -108,12 +134,18 @@ jobs:
       - name: Configure release keystore (optional)
         id: signmode
         env:
+          PIN: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
           KEYSTORE_B64: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_BASE64 || '' }}
           KEYSTORE_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_PASSWORD || '' }}
           KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_ALIAS || '' }}
           KEY_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_PASSWORD || '' }}
         run: |
           set -euo pipefail
+          # Report names only; values remain confined to signing steps.
+          for entry in KEYSTORE_B64:DRIVELINK_KEYSTORE_BASE64 KEYSTORE_PASS:DRIVELINK_KEYSTORE_PASSWORD KEY_ALIAS:DRIVELINK_KEY_ALIAS KEY_PASS:DRIVELINK_KEY_PASSWORD PIN:DRIVELINK_SIGNER_SHA256; do
+            key=${entry%:*}; name=${entry#*:}
+            if [[ -n ${!key} ]]; then echo "::notice::$name present"; else echo "::notice::BLOCKED $name unavailable"; fi
+          done
           if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
             echo "::warning::No DRIVELINK_KEYSTORE_* secrets; release APKs will be built UNSIGNED and are not publishable."
             echo "DRIVELINK_RELEASE_SIGNABLE=false" >> "$GITHUB_ENV"
@@ -270,6 +302,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Audit Apple signing availability without logging credentials
+        env:
+          TEAM: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          identities=$(security find-identity -v -p codesigning | awk '/"(Apple Distribution|iPhone Distribution):/{n++} END{print n+0}')
+          shopt -s nullglob
+          profiles=("$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision)
+          [[ -n $TEAM ]] && team=present || team=unavailable
+          echo "::notice::Apple team setting=$team; distribution identities=$identities; installed profiles=${#profiles[@]}"
       - name: Swift package tests
         run: |
           set -o pipefail
