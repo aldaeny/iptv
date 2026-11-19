@@ -10,6 +10,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: Assets.xcassets
     info:
       path: Info.plist
     entitlements:
@@ -20,6 +21,7 @@ targets:
         SWIFT_VERSION: "5.10"
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: BydMirror.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: BydBroadcastExtension
       - target: BydLiveActivityExtension
