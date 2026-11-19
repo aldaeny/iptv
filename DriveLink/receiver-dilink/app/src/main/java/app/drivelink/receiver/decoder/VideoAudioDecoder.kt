@@ -31,6 +31,7 @@ class VideoAudioDecoder {
         }.getOrDefault(false)
     }
 
+    @Synchronized
     fun configureVideo(surface: Surface, width: Int, height: Int, mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC) {
         releaseVideo()
         firstVideoPtsUs = -1L
@@ -48,14 +49,15 @@ class VideoAudioDecoder {
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 1024 * 1024)
         }
         runCatching {
-            val codec = MediaCodec.createDecoderByType(targetMime).apply {
+            videoCodec = MediaCodec.createDecoderByType(targetMime)
+            videoCodec!!.apply {
                 configure(format, surface, null, 0)
                 start()
             }
-            videoCodec = codec
-        }
+        }.onFailure { releaseVideo() }
     }
 
+    @Synchronized
     fun configureAudio(sampleRateHz: Int = 48_000, channelCount: Int = 2) {
         releaseAudio()
 
@@ -66,11 +68,11 @@ class VideoAudioDecoder {
             setByteBuffer("csd-0", aacCsd0)
         }
         runCatching {
-            val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC).apply {
+            audioCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            audioCodec!!.apply {
                 configure(format, null, null, 0)
                 start()
             }
-            audioCodec = codec
 
             val minBuf = AudioTrack.getMinBufferSize(
                 sampleRateHz,
@@ -93,10 +95,12 @@ class VideoAudioDecoder {
                 )
                 .setBufferSizeInBytes(maxOf(minBuf, 8192))
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .build().apply { play() }
-        }
+                .build()
+            audioTrack!!.play()
+        }.onFailure { releaseAudio() }
     }
 
+    @Synchronized
     fun decodeVideoFrame(annexBNalu: ByteArray, timestampUs: Long) {
         val codec = videoCodec ?: return
         val unsignedPtsUs = timestampUs and 0xFFFF_FFFFL
@@ -105,6 +109,10 @@ class VideoAudioDecoder {
             if (inIndex >= 0) {
                 val buffer = codec.getInputBuffer(inIndex) ?: return
                 buffer.clear()
+                if (annexBNalu.size > buffer.remaining()) {
+                    codec.queueInputBuffer(inIndex, 0, 0, unsignedPtsUs, 0)
+                    return
+                }
                 buffer.put(annexBNalu)
                 val flags = if (isCodecConfigOnly(annexBNalu, currentMime)) {
                     MediaCodec.BUFFER_FLAG_CODEC_CONFIG
@@ -124,6 +132,7 @@ class VideoAudioDecoder {
         }
     }
 
+    @Synchronized
     fun decodeAudioFrame(aacFrame: ByteArray, timestampUs: Long) {
         val codec = audioCodec ?: return
         val unsignedPtsUs = timestampUs and 0xFFFF_FFFFL
@@ -132,6 +141,10 @@ class VideoAudioDecoder {
             if (inIndex >= 0) {
                 val buffer = codec.getInputBuffer(inIndex) ?: return
                 buffer.clear()
+                if (aacFrame.size > buffer.remaining()) {
+                    codec.queueInputBuffer(inIndex, 0, 0, unsignedPtsUs, 0)
+                    return
+                }
                 buffer.put(aacFrame)
                 codec.queueInputBuffer(inIndex, 0, aacFrame.size, unsignedPtsUs, 0)
             }
@@ -162,24 +175,7 @@ class VideoAudioDecoder {
         return (expectedVideoPtsUs - videoPtsUs) > MAX_VIDEO_LAG_US
     }
 
-    private fun isCodecConfigOnly(data: ByteArray, mimeType: String): Boolean {
-        if (data.size < 4) return false
-        val naluByte = when {
-            data.size >= 5 && data[0].toInt() == 0 && data[1].toInt() == 0 && data[2].toInt() == 0 && data[3].toInt() == 1 ->
-                data[4].toInt() and 0xFF
-            data[0].toInt() == 0 && data[1].toInt() == 0 && data[2].toInt() == 1 ->
-                data[3].toInt() and 0xFF
-            else -> return false
-        }
-        return if (mimeType == MediaFormat.MIMETYPE_VIDEO_HEVC) {
-            val type = (naluByte ushr 1) and 0x3F
-            type in 32..34
-        } else {
-            val type = naluByte and 0x1F
-            type == 7 || type == 8
-        }
-    }
-
+    @Synchronized
     fun releaseVideo() {
         firstVideoPtsUs = -1L
         videoPlaybackStartNs = -1L
@@ -188,6 +184,7 @@ class VideoAudioDecoder {
         videoCodec = null
     }
 
+    @Synchronized
     fun releaseAudio() {
         runCatching { audioCodec?.stop() }
         runCatching { audioCodec?.release() }
@@ -197,6 +194,7 @@ class VideoAudioDecoder {
         audioTrack = null
     }
 
+    @Synchronized
     fun releaseAll() {
         releaseVideo()
         releaseAudio()

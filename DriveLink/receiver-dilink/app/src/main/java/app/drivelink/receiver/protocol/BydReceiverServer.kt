@@ -121,7 +121,11 @@ class BydReceiverServer(
     fun start(scope: CoroutineScope) {
         stop()
         serverJob = scope.launch(Dispatchers.IO) {
-            val server = ServerSocket(CONTROL_PORT).also { tcpServer = it }
+            val server = try { ServerSocket(CONTROL_PORT) } catch (e: java.io.IOException) {
+                android.util.Log.e("DriveLink", "Control listener unavailable", e)
+                return@launch
+            }
+            tcpServer = server
             startUdpMediaLoop(scope)
             startBeaconBroadcaster(scope)
             while (isActive) {
@@ -130,8 +134,12 @@ class BydReceiverServer(
                 val prevJob = clientJob
                 prevJob?.cancel()
                 clientJob = launch(Dispatchers.IO) {
-                    runCatching { prevJob?.join() }
-                    handleClient(client, scope)
+                    client.use {
+                        prevJob?.join()
+                        try { handleClient(it, scope) } catch (e: java.io.IOException) {
+                            android.util.Log.w("DriveLink", "Control connection closed during setup", e)
+                        }
+                    }
                 }
             }
         }
@@ -143,14 +151,14 @@ class BydReceiverServer(
             val hevcSupported = decoder.supportsHevcDecoder()
             val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":$hevcSupported}"""
                 .toByteArray(Charsets.UTF_8)
-            while (isActive) {
+            socket.use { while (isActive) {
                 val targets = resolveBroadcastAddresses()
                 for (addr in targets) {
                     runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
                 }
                 delay(1_000L)
             }
-            runCatching { socket.close() }
+            }
         }
     }
 
@@ -175,11 +183,16 @@ class BydReceiverServer(
 
     private fun startUdpMediaLoop(scope: CoroutineScope) {
         udpJob = scope.launch(Dispatchers.IO) {
-            val socket = DatagramSocket(MEDIA_UDP_PORT).also { udpSocket = it }
+            val socket = try { DatagramSocket(MEDIA_UDP_PORT) } catch (e: java.net.SocketException) {
+                android.util.Log.w("DriveLink", "UDP unavailable; TCP media fallback remains active", e)
+                return@launch
+            }
+            udpSocket = socket
             val buf = ByteArray(MAX_PACKET_BYTES)
             val packet = DatagramPacket(buf, buf.size)
             while (isActive) {
                 runCatching {
+                    packet.length = buf.size
                     socket.receive(packet)
                     val frameBytes = packet.data.copyOfRange(0, packet.length)
                     processIncomingFrameBytes(frameBytes)
@@ -230,6 +243,8 @@ class BydReceiverServer(
                     wirePayload
                 }
 
+                if (!encryptionActive && parsed.opcode != OPCODE_HELLO_SYN && parsed.opcode != OPCODE_KEY_EXCHANGE_INIT) break
+                if (encryptionActive && parsed.opcode in setOf(OPCODE_HELLO_SYN, OPCODE_KEY_EXCHANGE_INIT)) break
                 when (parsed.opcode) {
                     OPCODE_HELLO_SYN -> {
                         phoneName = payload.decodeToString()
@@ -280,6 +295,7 @@ class BydReceiverServer(
                         sendControlFrame(output, OPCODE_KEYFRAME_REQUEST, ByteArray(0))
                     }
                     OPCODE_ORIENTATION_CHANGE -> {
+                        if (!handshakeCompleted) break
                         isLandscape = payload.firstOrNull() == 0x01.toByte()
                         activeLandscape = isLandscape
                         val w = if (isLandscape) activeBaseWidth else activeBaseHeight
@@ -293,19 +309,19 @@ class BydReceiverServer(
                         )
                     }
                     OPCODE_VIDEO_NALU -> {
-                        if (!encryptionActive) break
+                        if (!handshakeCompleted) break
                         receivedFramesInWindow++
                         decoder.decodeVideoFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_VIDEO_NALU_FRAG -> {
-                        if (!encryptionActive) break
+                        if (!handshakeCompleted) break
                         reassembler.pushFragment(payload)?.let { fullFrame ->
                             receivedFramesInWindow++
                             decoder.decodeVideoFrame(fullFrame, parsed.timestampUs.toLong())
                         }
                     }
                     OPCODE_AUDIO_AAC -> {
-                        if (!encryptionActive) break
+                        if (!handshakeCompleted) break
                         decoder.decodeAudioFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_HEARTBEAT_PING -> {
@@ -337,10 +353,11 @@ class BydReceiverServer(
         if (bytes.size < HEADER_SIZE_BYTES) return
         val header = bytes.copyOfRange(0, HEADER_SIZE_BYTES)
         val parsed = parseHeader(header) ?: return
-        if (!antiReplay.accept(parsed.sequence)) return
-        if (bytes.size < HEADER_SIZE_BYTES + parsed.payloadLength) return
+        if (_state.value !is ReceiverState.MirroringActive || bytes.size != HEADER_SIZE_BYTES + parsed.payloadLength) return
         val wirePayload = bytes.copyOfRange(HEADER_SIZE_BYTES, HEADER_SIZE_BYTES + parsed.payloadLength)
         val payload = runCatching { crypto.decrypt(wirePayload, header) }.getOrNull() ?: return
+
+        if (!antiReplay.accept(parsed.sequence)) return
 
         if (lastVideoSeq != 0 && parsed.sequence > lastVideoSeq + 1) {
             droppedPackets += (parsed.sequence - lastVideoSeq - 1)

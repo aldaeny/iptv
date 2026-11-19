@@ -62,7 +62,8 @@ class MirrorForegroundService : Service() {
                 }
 
                 if (resultCode == Activity.RESULT_OK && resultData != null) {
-                    startCapture(resultCode, resultData)
+                    if (mediaProjection == null) runCatching { startCapture(resultCode, resultData) }
+                        .onFailure { android.util.Log.e("DriveLink", "Capture startup failed", it); stopSelf() }
                 } else {
                     stopSelf()
                 }
@@ -74,7 +75,7 @@ class MirrorForegroundService : Service() {
 
     private fun startCapture(resultCode: Int, data: Intent) {
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val projection = mgr.getMediaProjection(resultCode, data) ?: return
+        val projection = mgr.getMediaProjection(resultCode, data) ?: return stopSelf()
         mediaProjection = projection
 
         val densityDpi = resources.displayMetrics.densityDpi
@@ -89,18 +90,20 @@ class MirrorForegroundService : Service() {
             onProjectionStopped = {
                 stopSelf()
             }
-        ).apply {
-            start(
+        )
+        videoEncoder = vEncoder
+        vEncoder.start(
                 MirrorSessionCoordinator.activeProfile.value,
                 MirrorSessionCoordinator.orientation.value,
                 densityDpi
-            )
-        }
-        videoEncoder = vEncoder
+        )
 
         MirrorSessionCoordinator.onKeyframeRequested = { vEncoder.requestKeyFrame() }
         MirrorSessionCoordinator.onReconfigureEncoder = { profile, orientation ->
-            vEncoder.reconfigure(profile, orientation, densityDpi)
+            serviceScope.launch {
+                runCatching { vEncoder.reconfigure(profile, orientation, densityDpi) }
+                    .onFailure { android.util.Log.e("DriveLink", "Encoder reconfiguration failed", it); stopSelf() }
+            }
         }
         MirrorSessionCoordinator.onStopServices = {
             if (BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
@@ -116,7 +119,7 @@ class MirrorForegroundService : Service() {
                 protocol.sendAudioFrame(aac, ptsUs)
             }
         ).apply {
-            runCatching { start() }
+            runCatching { start() }.onFailure { stop(); android.util.Log.w("DriveLink", "Audio capture unavailable", it) }
         }
     }
 
@@ -138,7 +141,7 @@ class MirrorForegroundService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "BYD Wireless Mirroring",
+            "DriveLink Cast",
             NotificationManager.IMPORTANCE_LOW
         )
         manager.createNotificationChannel(channel)

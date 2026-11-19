@@ -688,6 +688,12 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			}
 		}
 
+		if !s.crypto.IsActive() && opcode != opHelloSyn && opcode != opKeyExchangeInit {
+			break
+		}
+		if s.crypto.IsActive() && (opcode == opHelloSyn || opcode == opKeyExchangeInit) {
+			break
+		}
 		switch opcode {
 		case opHelloSyn:
 			if len(payload) > 0 {
@@ -859,7 +865,8 @@ func buildMDNSAnnouncement(ip4 net.IP) []byte {
 	pkt = append(pkt, srvData...)
 
 	// 3. TXT -> model=BYD DiLink 5.0
-	txt := []byte("\x14model=BYD DiLink 5.0")
+	model := "model=BYD DiLink 5.0"
+	txt := append([]byte{byte(len(model))}, model...)
 	pkt = append(pkt, instName...)
 	pkt = append(pkt, 0, 16, 0x80, 1, 0, 0, 0, 120)
 	pkt = binary.BigEndian.AppendUint16(pkt, uint16(len(txt)))
