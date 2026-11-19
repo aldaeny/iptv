@@ -329,10 +329,11 @@ def check_android_manifest() -> None:
         "android.permission.POST_NOTIFICATIONS",
     }
     android = "{" + ns["android"] + "}"
-    projection = next((s for s in manifest.findall("application/service")
-                       if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService"), None)
-    if projection is None or projection.get(android + "foregroundServiceType") != "mediaProjection":
-        fail("projection service must resolve to the sender class in both application IDs")
+    for tree in (manifest, ET.parse(ROOT / "android/app/src/fullTouch/AndroidManifest.xml")):
+        projection = next((s for s in tree.findall("application/service")
+                           if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService"), None)
+        if projection is None or projection.get(android + "foregroundServiceType") != "mediaProjection":
+            fail("both flavor manifest inputs must declare the projection service type")
     missing = required - perms
     if missing:
         fail(f"AndroidManifest lost permissions: {sorted(missing)}")
