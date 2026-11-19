@@ -52,7 +52,7 @@
         </activity>
 
         <service
-            android:name=".service.MirrorForegroundService"
+            android:name="app.drivelink.cast.service.MirrorForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>

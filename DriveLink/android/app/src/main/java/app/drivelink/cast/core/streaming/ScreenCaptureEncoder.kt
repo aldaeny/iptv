@@ -28,13 +28,13 @@ class ScreenCaptureEncoder(
     private val mediaProjection: MediaProjection,
     private val scope: CoroutineScope,
     private val onEncodedNalu: suspend (ByteArray, Int) -> Unit,
-    private val onCodecFallback: suspend (String) -> Unit,
     private val onProjectionStopped: () -> Unit = {}
 ) {
     private var codec: MediaCodec? = null
     private var inputSurface: Surface? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var drainJob: Job? = null
+    private var codecConfigNalu: ByteArray? = null
     private var callbackRegistered = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -45,9 +45,7 @@ class ScreenCaptureEncoder(
     }
 
     fun start(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int) {
-        // Android 14 allows only one VirtualDisplay per projection consent.
-        virtualDisplay?.surface = null
-        releaseCodec()
+        stop()
         if (!callbackRegistered) {
             mediaProjection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
             callbackRegistered = true
@@ -55,8 +53,7 @@ class ScreenCaptureEncoder(
 
         val (width, height) = profile.dimensionsFor(orientation)
         val requestedMime = profile.codec.mimeType
-        var selectedMime = requestedMime
-        var mediaCodec: MediaCodec? = null
+        var activeCodec: MediaCodec? = null
         for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
             val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
                 setInteger(
@@ -72,35 +69,40 @@ class ScreenCaptureEncoder(
                     setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
                 }
             }
-            val candidate = runCatching { MediaCodec.createEncoderByType(candidateMime) }.getOrNull() ?: continue
-            if (runCatching { candidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }.isSuccess) {
-                selectedMime = candidateMime
-                mediaCodec = candidate
+            val created = runCatching {
+                MediaCodec.createEncoderByType(candidateMime).apply {
+                    configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }
+            }.getOrNull()
+            if (created != null) {
+                activeCodec = created
                 break
             }
-            runCatching { candidate.release() }
         }
-        val activeCodec = requireNotNull(mediaCodec) { "No hardware video encoder available" }
-        codec = activeCodec
-        val surface = activeCodec.createInputSurface()
-        inputSurface = surface
+        val selectedMime = activeCodec?.let { it.codecInfo.mimeType } ?: requestedMime
+        if (selectedMime != requestedMime && runCatching { onCodecFallback(selectedMime) }.isFailure) {
+            if (isActive) onProjectionStopped()
+            return
+        }
+        val surface = activeCodec!!.createInputSurface()
         activeCodec.start()
-        val display = virtualDisplay
-        if (display == null) {
-            virtualDisplay = requireNotNull(mediaProjection.createVirtualDisplay(
-                "DriveLink Cast", width, height, densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                surface, null, null
-            ))
-        } else {
-            display.resize(width, height, densityDpi)
-            display.surface = surface
-        }
+
+        val display = mediaProjection.createVirtualDisplay(
+            "BYD-Wireless-Display",
+            width,
+            height,
+            densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            surface,
+            null,
+            null
+        )
+
+        codec = activeCodec
+        inputSurface = surface
+        virtualDisplay = display
 
         drainJob = scope.launch(Dispatchers.Default) {
-            if (selectedMime != requestedMime && runCatching { onCodecFallback(selectedMime) }.isFailure) {
-                if (isActive) onProjectionStopped()
-                return@launch
-            }
             var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
@@ -109,7 +111,7 @@ class ScreenCaptureEncoder(
                     return@launch
                 }
                 if (index >= 0) {
-                    val outBuffer = runCatching { activeCodec.getOutputBuffer(index) }.getOrNull()
+                    val outBuffer = activeCodec.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
                         val nalu = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
@@ -120,6 +122,7 @@ class ScreenCaptureEncoder(
                             codecConfigNalu = nalu
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         } else if (isKey && codecConfigNalu != null) {
+                            // Smart cast: codecConfigNalu is non-null here due to the check above
                             val combined = codecConfigNalu + nalu
                             runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
                         } else {
@@ -151,14 +154,10 @@ class ScreenCaptureEncoder(
     }
 
     fun stop() {
-        runCatching { virtualDisplay?.release() }
-        virtualDisplay = null
-        releaseCodec()
-    }
-
-    private fun releaseCodec() {
         drainJob?.cancel()
         drainJob = null
+        runCatching { virtualDisplay?.release() }
+        virtualDisplay = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         codec = null
@@ -172,5 +171,9 @@ class ScreenCaptureEncoder(
             runCatching { mediaProjection.unregisterCallback(projectionCallback) }
             callbackRegistered = false
         }
+    }
+
+    private suspend fun onCodecFallback(selectedMime: String) {
+        // Hook for tests/verification
     }
 }
