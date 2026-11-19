@@ -52,6 +52,9 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
     private val _isArabic = MutableStateFlow(true)
     val isArabic: StateFlow<Boolean> = _isArabic.asStateFlow()
 
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
     private val _trustedVehicles = MutableStateFlow(trustedStore.listTrusted())
     val trustedVehicles: StateFlow<List<TrustedVehicle>> = _trustedVehicles.asStateFlow()
 
@@ -174,6 +177,18 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleLanguage() {
         _isArabic.value = !_isArabic.value
+    }
+
+    fun refreshDiscovery() {
+        if (_isScanning.value) return
+        _isScanning.value = true
+        wifiP2p.startDiscovery()
+        nsdDiscovery.startDiscovery()
+        miracastAdapter.startScanning()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(3_000L)
+            _isScanning.value = false
+        }
     }
 
     fun connectManualIp(rawHost: String) {

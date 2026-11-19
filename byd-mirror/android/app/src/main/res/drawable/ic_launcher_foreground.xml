@@ -4,13 +4,61 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Left: Sleek Smartphone -->
     <path
-        android:fillColor="#00D4FF"
-        android:pathData="M30,36 L78,36 A6,6 0 0,1 84,42 L84,66 A6,6 0 0,1 78,72 L30,72 A6,6 0 0,1 24,66 L24,42 A6,6 0 0,1 30,36 Z" />
+        android:fillColor="#E2ECFA"
+        android:pathData="M24,35 L39,35 A3,3 0 0,1 42,38 L42,70 A3,3 0 0,1 39,73 L24,73 A3,3 0 0,1 21,70 L21,38 A3,3 0 0,1 24,35 Z" />
     <path
-        android:fillColor="#080B10"
-        android:pathData="M34,42 L74,42 L74,66 L34,66 Z" />
+        android:fillColor="#1677FF"
+        android:pathData="M23.5,38.5 L39.5,38.5 L39.5,69.5 L23.5,69.5 Z" />
     <path
-        android:fillColor="#10B981"
-        android:pathData="M46,50 L64,54 L46,58 Z" />
+        android:fillColor="#00C8FF"
+        android:pathData="M23.5,38.5 L39.5,38.5 L39.5,51 L23.5,60 Z" />
+
+    <!-- Center: Wireless Mirroring Waves -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M45.5,48.5 A8,8 0 0,1 45.5,59.5"
+        android:strokeColor="#00E5FF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.4" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49.5,44 A14,14 0 0,1 49.5,64"
+        android:strokeColor="#00C8FF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.4" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M53.5,39.5 A20,20 0 0,1 53.5,68.5"
+        android:strokeColor="#1677FF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.4" />
+
+    <!-- Right: Automotive EV Silhouette & Display -->
+    <path
+        android:fillColor="#C6D6EC"
+        android:pathData="M56,55 L63,46.5 C64.5,44.8 66.5,44 69,44 L80,44 C82.5,44 84.5,45.2 85.8,47.5 L87,52 L87,64 A2.5,2.5 0 0,1 84.5,66.5 L57.5,66.5 A2.5,2.5 0 0,1 55,64 L55,57.5 C55,56.5 55.4,55.7 56,55 Z" />
+    <path
+        android:fillColor="#080F1C"
+        android:pathData="M62.5,53 L66,47 L79.5,47 L82.5,53 Z" />
+    <!-- Cyan EV Headlight & Rim Bar -->
+    <path
+        android:fillColor="#00C8FF"
+        android:pathData="M58,57.5 L67,57.5 L65.5,60 L58,60 Z" />
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M75,57.5 L84,57.5 L84,60 L76.5,60 Z" />
+    <path
+        android:fillColor="#080F1C"
+        android:pathData="M61.5,64.5 A4,4 0 1,0 61.5,72.5 A4,4 0 1,0 61.5,64.5 Z" />
+    <path
+        android:fillColor="#080F1C"
+        android:pathData="M80.5,64.5 A4,4 0 1,0 80.5,72.5 A4,4 0 1,0 80.5,64.5 Z" />
+    <path
+        android:fillColor="#00C8FF"
+        android:pathData="M61.5,66.5 A2,2 0 1,0 61.5,70.5 A2,2 0 1,0 61.5,66.5 Z" />
+    <path
+        android:fillColor="#00C8FF"
+        android:pathData="M80.5,66.5 A2,2 0 1,0 80.5,70.5 A2,2 0 1,0 80.5,66.5 Z" />
 </vector>
