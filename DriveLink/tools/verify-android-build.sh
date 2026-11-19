@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# != 3 || ( $1 != debug && $1 != release ) ]]; then
-  echo 'Usage: verify-android-build.sh {debug|release} DRIVE_LINK_ROOT OUTPUT_DIR' >&2
+if [[ $# != 3 || ( $1 != debug && $1 != release && $1 != unsigned ) ]]; then
+  echo 'Usage: verify-android-build.sh {debug|release|unsigned} DRIVE_LINK_ROOT OUTPUT_DIR' >&2
+  echo '  release  : requires DRIVELINK_SIGNER_SHA256 and a non-debug signer' >&2
+  echo '  unsigned : release APKs built without a keystore; size/metadata only' >&2
   exit 2
 fi
 variant=$1
@@ -33,7 +35,7 @@ shopt -s nullglob
     [[ $package == "${ids[i]}" ]]
     grep -Fq "versionCode='3' versionName='1.4.1'" <<< "$badging"
     grep -Fxq "sdkVersion:'26'" <<< "$badging"
-    signed=$(apksigner verify --verbose --print-certs "$apk")
+    signed=$(apksigner verify --verbose --print-certs "$apk" 2>&1) || signed="(apksigner: not signed)"
     if [[ $variant == release ]]; then
       [[ $badging != *application-debuggable* ]]
       actual=$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' <<< "$signed")
@@ -42,6 +44,8 @@ shopt -s nullglob
         echo "Debug certificate rejected for $package" >&2
         exit 1
       fi
+    elif [[ $variant == unsigned ]]; then
+      [[ $badging != *application-debuggable* ]] || { echo "Unsigned release build must not be debuggable ($package)" >&2; exit 1; }
     fi
     cp -- "$apk" "$out/${names[i]}"
     printf '## %s\n\nPackage: `%s`. Size: %s bytes.\n\n```text\n%s\n```\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$signed"

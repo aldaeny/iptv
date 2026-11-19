@@ -11,6 +11,7 @@ echo "=== DriveLink Cast — local verification & build (tree: $ROOT) ==="
 
 python3 "$ROOT/tests/verify_isolation.py"
 python3 "$ROOT/tests/verify_protocol.py"
+python3 "$ROOT/tests/verify_release.py"
 node "$ROOT/tests/crypto_fuzz_suite.mjs"
 
 if command -v go >/dev/null 2>&1; then

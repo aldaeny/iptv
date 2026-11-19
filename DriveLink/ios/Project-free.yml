@@ -1,3 +1,6 @@
+# Free Sideload build: a single app target with ONE bundle identifier, so the whole
+# app (ReplayKit handler + Live Activity code) lives in one process and needs no
+# App Group / extension provisioning profile. See docs/IOS_GUIDE.md.
 name: BydWirelessMirrorFree
 options:
   bundleIdPrefix: app.drivelink.cast

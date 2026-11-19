@@ -40,6 +40,7 @@
 ```sh
 python3 DriveLink/tests/verify_isolation.py    # الحزم والملحقات وApp Group وتوقيع الإصدار
 python3 DriveLink/tests/verify_protocol.py     # ثوابت البروتوكول والتكافؤ بين المنصات والفريمينج
+python3 DriveLink/tests/verify_release.py      # بوابات الإصدار المصدرية (DSL، موارد، imports، iOS، منافذ)
 node    DriveLink/tests/crypto_fuzz_suite.mjs  # التشفير والـ fuzz وتجربة loopback حيّة (TCP/UDP + WebCodecs)
 cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
 ```
