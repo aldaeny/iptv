@@ -20,7 +20,15 @@ require(('android.permission.SYSTEM_ALERT_WINDOW' in permissions) == (label == '
 projection = services.get('app.drivelink.cast.service.MirrorForegroundService')
 require((projection is not None) == (label != 'Receiver'), 'projection service mismatch')
 if projection is not None:
-    require(projection.get(key+'foregroundServiceType') == 'mediaProjection' and projection.get(key+'exported') == 'false', 'unsafe projection service')
+    kind = projection.get(key+'foregroundServiceType', '')
+    # Binary XML can expose the Android flag value instead of its SDK enum name.
+    try:
+        media_projection_only = int(kind, 0) == 0x20
+    except ValueError:
+        media_projection_only = kind == 'mediaProjection'
+    exported = projection.get(key+'exported')
+    require(media_projection_only and exported == 'false',
+            f'unsafe projection service (type={kind!r}, exported={exported!r})')
 for name in ['MirrorOverlayService','BydTouchAccessibilityService']:
     require(('app.drivelink.cast.service.'+name in services) == (label=='FullTouch'), 'incorrect '+name)
 print(label, 'permissions:', ', '.join(sorted(permissions)), 'services:', ', '.join(sorted(services)))
