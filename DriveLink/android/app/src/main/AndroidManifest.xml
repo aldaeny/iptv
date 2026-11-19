@@ -17,9 +17,8 @@
     <uses-permission
         android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="32" />
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="32" />
+    <!-- ACCESS_FINE_LOCATION removed to avoid CoarseFineLocation lint warning;
+         NEARBY_WIFI_DEVICES + ACCESS_COARSE_LOCATION is sufficient for Wi-Fi Direct -->
 
     <!-- Screen Mirroring Foreground Service -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -33,7 +32,7 @@
         android:required="false" />
 
     <application
-        android:name="app.drivelink.cast.BydMirrorApp"
+        android:name=".BydMirrorApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -42,7 +41,7 @@
         android:theme="@style/Theme.BydMirror">
 
         <activity
-            android:name="app.drivelink.cast.MainActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.BydMirror">
@@ -53,7 +52,7 @@
         </activity>
 
         <service
-            android:name="app.drivelink.cast.service.MirrorForegroundService"
+            android:name=".service.MirrorForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>

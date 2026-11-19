@@ -62,6 +62,7 @@ class WifiP2pTransport(private val context: Context) {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun initialize() {
         channel = manager?.initialize(context, context.mainLooper, null)
         val filter = IntentFilter().apply {
