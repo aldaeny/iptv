@@ -69,6 +69,29 @@ object MirrorSessionCoordinator {
 
     private fun supportedCodec(codec: VideoCodec) = if (peerSupportsHevc) codec else VideoCodec.H264
 
+    /**
+     * Records the codec the hardware encoder actually opened after a fallback, and keeps the live
+     * session in step with it. [activeProfile] stays the single source of truth for the codec, so
+     * later reconfigures (orientation, thermal, quality) ask for the real codec instead of one this
+     * device cannot open.
+     *
+     * Returns the updated profile, or null when the codec is unchanged — that null is what stops
+     * the same transition from being announced twice. The encoder is deliberately not reconfigured
+     * here: it is already running this codec, and reconfiguring from inside its own start callback
+     * would restart it recursively.
+     */
+    fun applyActiveCodec(codec: VideoCodec): DisplayProfile? {
+        val current = _activeProfile.value
+        if (current.codec == codec) return null
+        val updated = current.copy(codec = codec)
+        _activeProfile.value = updated
+        val state = _connectionState.value
+        if (state is ConnectionState.Streaming) {
+            _connectionState.value = state.copy(profile = updated)
+        }
+        return updated
+    }
+
     private var pingJob: Job? = null
     private var reconnectJob: Job? = null
     private var lastConnectedDevice: BydDevice? = null
@@ -166,18 +189,21 @@ object MirrorSessionCoordinator {
         profile: DisplayProfile,
         fingerprint: String
     ) {
-        runCatching { protocolWrapper.startMediaSession(profile, fingerprint) }.onFailure {
+        // Honour a codec recorded by an encoder fallback: the receiver must be told the codec that
+        // will really be used, not the one originally negotiated.
+        val effectiveProfile = profile.copy(codec = _activeProfile.value.codec)
+        runCatching { protocolWrapper.startMediaSession(effectiveProfile, fingerprint) }.onFailure {
             _connectionState.value = ConnectionState.Error(it.localizedMessage ?: "Session start failed")
             return
         }
-        _telemetry.value = _telemetry.value.copy(currentBitrateMbps = profile.bitrateMbps.toFloat())
+        _telemetry.value = _telemetry.value.copy(currentBitrateMbps = effectiveProfile.bitrateMbps.toFloat())
         _connectionState.value = ConnectionState.Streaming(
             device = device,
-            profile = profile,
+            profile = effectiveProfile,
             orientation = _orientation.value,
             encryptedChannelFingerprint = fingerprint
         )
-        onReconfigureEncoder?.invoke(profile, _orientation.value)
+        onReconfigureEncoder?.invoke(effectiveProfile, _orientation.value)
         startTelemetryLoops()
     }
 

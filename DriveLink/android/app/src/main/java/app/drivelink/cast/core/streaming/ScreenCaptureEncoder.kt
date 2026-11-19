@@ -82,15 +82,17 @@ class ScreenCaptureEncoder(
                 break
             }
         }
-        if (selectedMime != requestedMime) {
-            onCodecFallback(selectedMime)
-        }
         val encoder = requireNotNull(activeCodec) {
             onProjectionStopped()
             "No hardware video encoder available"
         }
         val surface = encoder.createInputSurface()
         encoder.start()
+        // Announced only once the encoder is actually running, so a codec that fails to start
+        // can never move the session profile away from the codec that is really in use.
+        if (selectedMime != requestedMime) {
+            onCodecFallback(selectedMime)
+        }
 
         val display = mediaProjection.createVirtualDisplay(
             "BYD-Wireless-Display",

@@ -90,18 +90,27 @@ class MirrorForegroundService : Service() {
                 protocol.sendVideoFrame(nalu, ptsUs)
             },
             onCodecFallback = { mime ->
-                val session = MirrorSessionCoordinator.connectionState.value as? ConnectionState.Streaming
                 val codec = VideoCodec.entries.firstOrNull { it.mimeType == mime }
-                if (session != null && codec != null) {
-                    serviceScope.launch {
-                        runCatching {
-                            protocol.startMediaSession(
-                                session.profile.copy(codec = codec),
-                                session.encryptedChannelFingerprint
+                if (codec != null) {
+                    val session = MirrorSessionCoordinator.connectionState.value as? ConnectionState.Streaming
+                    // The encoder is already running this codec, so record it first, then announce it.
+                    val updated = MirrorSessionCoordinator.applyActiveCodec(codec)
+                    if (updated != null) {
+                        if (session == null) {
+                            // No live session yet: activateStreaming() will declare the recorded codec.
+                            android.util.Log.i(
+                                "DriveLink",
+                                "Codec fallback recorded before streaming: ${codec.mimeType}"
                             )
-                        }.onFailure {
-                            android.util.Log.e("DriveLink", "Codec fallback negotiation failed", it)
-                            stopSelf()
+                        } else {
+                            serviceScope.launch {
+                                runCatching {
+                                    protocol.startMediaSession(updated, session.encryptedChannelFingerprint)
+                                }.onFailure {
+                                    android.util.Log.e("DriveLink", "Codec fallback negotiation failed", it)
+                                    stopSelf()
+                                }
+                            }
                         }
                     }
                 }
