@@ -3,8 +3,8 @@
 > **هذا التقرير يسجّل فقط ما نُفِّذ فعلياً.** لا يوجد في هذا الإصدار أي APK أو AAB أو IPA أو توقيع أو تثبيت
 > ناتج عن هذه الدورة؛ كل بند لم يُنفَّذ مكتوب صراحةً أنه **NOT EXECUTED / BLOCKED** مع سببه.
 
-- **Commit الذي جرى التحقق منه:** `78bc8f5` على الفرع `arena/bf1a2348-iptv` (الأساس `3bd6a1a` = master الموحّد)
-- **تاريخ التقرير:** 2026-11-19
+- **Commit الذي جرى التحقق منه:** `a16c250` على الفرع `arena/bf1a2348-iptv` (الأساس `3bd6a1a` = master الموحّد)
+- **تاريخ التقرير:** 2026-11-19 (تحديث ثانٍ بعد مراجعة عوائق DSL)
 - **شجرة المصدر:** `DriveLink/` فقط (222+ ملفاً) — لا وجود لـ`byd-mirror/`
 
 ---
@@ -26,6 +26,7 @@
 | Java compatibility | **PASS** | `sourceCompatibility/targetCompatibility = VERSION_17`، `jvmTarget = "17"` |
 | SDK levels | **PASS** | `compileSdk 35`، `buildToolsVersion 35.0.0`، `minSdk 26`، `targetSdk 34` |
 | موقع `buildToolsVersion` | **PASS بعد الإصلاح** | كان داخل `defaultConfig` (غير صالح في AGP 8) → نُقل إلى `android { }` |
+| `signingConfigs` DSL | **PASS بعد الإصلاح** | كان `getByName("debug")` داخل `signingConfigs` وهذا غير موجود في AGP 8 Kotlin DSL → صار `named("debug")`، وأُضيف فحص آلي يمنع رجوعه |
 | إعداد التوقيع | **PASS** | `release` يستخدم `signingConfigs.findByName("release")` فقط، بلا fallback إلى debug، وغير قابل للتصحيح |
 | متغيرات التوقيع | **PASS** | `DRIVELINK_KEYSTORE_PATH/_PASSWORD`, `DRIVELINK_KEY_ALIAS/_PASSWORD` |
 | wrapper قابل للتنفيذ | **PASS** | `gradlew` نمط `100755` في git لكلا المشروعين |
@@ -100,6 +101,8 @@ PASS  ALL SIMULATOR UI WIRING CHECKS PASSED
 4. **لا مفتاح توقيع إصدار** (`DRIVELINK_KEYSTORE_*` غير موجود في البيئة) — بدونه حتى مع Actions سيبقى
    الإصدار **unsigned** ولن يُنشر تلقائياً (الـworkflow يعلّم ذلك ويوقفه).
 5. **لا جهاز/محاكي/BYD DiLink** — التحقق المادي للبث 1080p@60 واللمس العكسي وتوافق السيارة: **UNVERIFIED**.
+6. **سجل المحاولات الفاشلة الفعلية** لتنفيذ البناء محلياً (JDK/Gradle/Maven/SDK) محفوظ في
+   [`reports/build-runs/local-log.md`](../../reports/build-runs/local-log.md).
 
 ## 9. الاختبار الدخاني للمحاكي (الدليل الفعلي الوحيد لتشغيل واجهة)
 
