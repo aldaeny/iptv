@@ -376,7 +376,9 @@ def check_release_workflows() -> None:
         fail("publish workflow does not re-gate the exact commit it publishes")
     if "verify_release.py" not in publish:
         fail("publish workflow does not run the source release gate")
-    if "drivelink-unsigned-" in publish:
+    # Comments may explain the quarantine; executable lines must never touch it.
+    if any("drivelink-unsigned-" in ln and not ln.strip().startswith("#")
+           for ln in publish.splitlines()):
         fail("publish workflow references the unsigned artifact namespace")
     ok("release workflows: signed/unsigned separated, stale+foreign runs refused")
 
