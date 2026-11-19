@@ -34,7 +34,7 @@ shopt -s nullglob
     apk=${files[0]}
     unzip -tq "$apk" >/dev/null
     for member in AndroidManifest.xml classes.dex resources.arsc; do
-      [[ $(unzip -Z -l "$apk" "$member" | awk '$1 ~ /^-/ {print $4}') -gt 0 ]] || { echo "$apk: missing/empty $member" >&2; exit 1; }
+      [[ $(unzip -p "$apk" "$member" | wc -c) -gt 0 ]] || { echo "$apk: missing/empty $member" >&2; exit 1; }
     done
     badging=$(aapt dump badging "$apk")
     package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")

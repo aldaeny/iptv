@@ -79,6 +79,8 @@ jobs:
             echo "source run is not the DriveLink release build" >&2; exit 1
           fi
 
+          jq -e '.path == ".github/workflows/drivelink-android-release.yml"' /tmp/run.json >/dev/null
+
           head_sha=$(jq -r '.head_sha // ""' /tmp/run.json)
           [[ $head_sha =~ ^[0-9a-f]{40}$ ]] || { echo "source run has no valid head_sha" >&2; exit 1; }
 

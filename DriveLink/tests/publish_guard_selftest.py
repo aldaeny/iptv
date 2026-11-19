@@ -124,6 +124,7 @@ def scenario(tmp: Path, guard: str, name: str, *, run: dict, artifacts: list[dic
 def base_run(**over) -> dict:
     run = {
         "id": 1234567890,
+        "path": ".github/workflows/drivelink-android-release.yml",
         "name": "DriveLink CI & Android Release Build",
         "conclusion": "success",
         "event": "workflow_dispatch",
@@ -162,6 +163,8 @@ def main() -> int:
         ("stale-run", dict(run=base_run(created_at="2026-10-01T00:00:00Z"), artifacts=signed(), expect_ok=False)),
         ("foreign-repo", dict(run=base_run(created_at=now, repository={"full_name": "someone/else"}),
                               artifacts=signed(), expect_ok=False)),
+        ("same-name-wrong-workflow", dict(run=base_run(created_at=now, path=".github/workflows/other.yml"),
+                                               artifacts=signed(), expect_ok=False)),
         ("failed-run", dict(run=base_run(conclusion="failure", created_at=now), artifacts=signed(), expect_ok=False)),
         ("bad-run-id", dict(run=base_run(created_at=now), artifacts=signed(),
                             env={"RUN_ID": "../../repos/x"}, expect_ok=False)),
