@@ -14,14 +14,10 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-    info:
-      path: Info.plist
-    entitlements:
-      path: BydMirror-free.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.drivelink.cast.app.free
-        SWIFT_VERSION: "5.10"
+        SWIFT_VERSION: "5.0"
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: BydMirror-free.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
