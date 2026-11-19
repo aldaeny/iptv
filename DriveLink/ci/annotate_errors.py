@@ -9,7 +9,7 @@ for filename in sys.argv[1:]:
     if not path.is_file():
         continue
     for line in path.read_text(errors="replace").splitlines():
-        if re.search(r"^(e: |.*\.(?:swift|kt|kts|xml):\d+[: ].*(?:error|Error):|> Could not |Plugin \[id:|.*error: resource )", line):
+        if re.search(r"^(e: |.*\.(?:swift|kt|kts|xml):\d+[: ].*(?:error|Error):|.*: Error: |Execution failed for task |\s*> .*?(?:failed|not found|could not)|> Could not |Plugin \[id:|.*error: resource )", line):
             if line not in seen and len(seen) < 40:
                 seen.add(line)
                 print("::error::" + line[:700].replace("%", "%25"))
