@@ -33,7 +33,7 @@
         android:required="false" />
 
     <application
-        android:name=".BydMirrorApp"
+        android:name="app.drivelink.cast.BydMirrorApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -42,7 +42,7 @@
         android:theme="@style/Theme.BydMirror">
 
         <activity
-            android:name=".MainActivity"
+            android:name="app.drivelink.cast.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.BydMirror">
@@ -53,7 +53,7 @@
         </activity>
 
         <service
-            android:name=".service.MirrorForegroundService"
+            android:name="app.drivelink.cast.service.MirrorForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>

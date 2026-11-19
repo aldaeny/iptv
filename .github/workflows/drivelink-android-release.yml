@@ -160,8 +160,14 @@ jobs:
           else
             bash DriveLink/tools/verify-android-build.sh unsigned DriveLink "$RUNNER_TEMP/drivelink-release"
           fi
-      - name: Smoke test verified release APKs on an API 35 emulator
-        if: steps.signmode.outputs.mode == 'release'
+      - name: Build debug APKs (installable smoke-test artifacts)
+        run: |
+          set -o pipefail
+          (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardDebug :app:assembleFullTouchDebug)
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
+      - name: Smoke test release-signed APKs, or separately labelled debug APKs if unsigned
+        if: github.event_name == 'workflow_dispatch'
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -170,20 +176,24 @@ jobs:
           image='system-images;android-35;google_apis;x86_64'
           "$tools/sdkmanager" emulator "$image"
           echo no | "$tools/avdmanager" create avd -n drivelink-test -k "$image"
-          "$ANDROID_HOME/emulator/emulator" -avd drivelink-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          trap 'adb emu kill || true' EXIT
-          timeout 600 bash -c 'adb wait-for-device; until [[ $(adb shell getprop sys.boot_completed | tr -d "\r") == 1 ]]; do sleep 2; done'
-          bash DriveLink/tools/smoke-android.sh "$RUNNER_TEMP/drivelink-release" | tee "$RUNNER_TEMP/drivelink-release/DEVICE_TEST.txt"
-      - name: Build debug APKs (installable smoke-test artifacts)
-        run: |
-          set -o pipefail
-          (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardDebug :app:assembleFullTouchDebug)
-          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
-          bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
+          args=()
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then args+=(-accel off); fi
+          "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          deadline=$((SECONDS + 600))
+          until [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then tail -50 "$RUNNER_TEMP/emulator.log"; exit 1; fi
+            sleep 3
+          done
+          dir="$RUNNER_TEMP/drivelink-debug"
+          if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
+          bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
       - name: Collect build logs
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/drivelink-logs"
+          [[ ! -f "$RUNNER_TEMP/emulator.log" ]] || cp "$RUNNER_TEMP/emulator.log" "$RUNNER_TEMP/drivelink-logs"
           shopt -s globstar nullglob
           python3 DriveLink/ci/annotate_errors.py "$RUNNER_TEMP"/drivelink-logs/*.log DriveLink/**/lint-results*.txt
           find DriveLink -name "lint-results*.txt" -o -name "lint-results*.html" | while read -r f; do
