@@ -108,10 +108,10 @@ jobs:
       - name: Configure release keystore (optional)
         id: signmode
         env:
-          KEYSTORE_B64: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.DRIVELINK_KEYSTORE_BASE64 || '' }}
-          KEYSTORE_PASS: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.DRIVELINK_KEYSTORE_PASSWORD || '' }}
-          KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.DRIVELINK_KEY_ALIAS || '' }}
-          KEY_PASS: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.DRIVELINK_KEY_PASSWORD || '' }}
+          KEYSTORE_B64: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_BASE64 || '' }}
+          KEYSTORE_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_PASSWORD || '' }}
+          KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_ALIAS || '' }}
+          KEY_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_PASSWORD || '' }}
         run: |
           set -euo pipefail
           if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
