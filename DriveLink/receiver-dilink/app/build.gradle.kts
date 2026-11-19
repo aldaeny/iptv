@@ -18,7 +18,9 @@ android {
     }
 
     signingConfigs {
-        getByName("debug") {
+        // The implicit debug signing config already exists; only its v1/v2 flags are tuned.
+        // ("getByName" is not a valid `signingConfigs` member in AGP 8 Kotlin DSL.)
+        named("debug") {
             enableV1Signing = true
             enableV2Signing = true
         }

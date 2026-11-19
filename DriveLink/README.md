@@ -40,6 +40,7 @@
 ```sh
 python3 DriveLink/tests/verify_isolation.py    # الحزم والملحقات وApp Group وتوقيع الإصدار
 python3 DriveLink/tests/verify_protocol.py     # ثوابت البروتوكول والتكافؤ بين المنصات والفريمينج
+python3 DriveLink/tests/verify_release.py      # بوابات الإصدار المصدرية (DSL، موارد، imports، iOS، منافذ)
 node    DriveLink/tests/crypto_fuzz_suite.mjs  # التشفير والـ fuzz وتجربة loopback حيّة (TCP/UDP + WebCodecs)
 cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
 ```
@@ -59,4 +60,4 @@ cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
   `DriveLink/**`، ومهمة `android` (بناء وتوقيع والتحقق من APK) تُشغَّل يدوياً عبر `workflow_dispatch`.
 
 لم تُنتج APK أو IPA في هذه البيئة، ولم يُنفَّذ بناء Android/iOS هنا؛ التفاصيل في
-[releases/v1.4.1/BUILD_REPORT.md](releases/v1.4.1/BUILD_REPORT.md) و[release-delivery/](release-delivery/).
+[releases/v1.4.1/FINAL_VALIDATION_REPORT.md](releases/v1.4.1/FINAL_VALIDATION_REPORT.md) و[release-delivery/](release-delivery/).

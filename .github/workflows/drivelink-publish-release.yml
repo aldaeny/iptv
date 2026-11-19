@@ -1,0 +1,128 @@
+name: DriveLink Publish Release
+
+# Manual, gated publication of DriveLink 1.4.1 artifacts.
+#
+# Nothing here runs automatically. It refuses to publish unless:
+#   * the chosen release run succeeded, and
+#   * every APK inside it verifies (package id, versionCode 3, versionName 1.4.1,
+#     minSdk 26, non-debuggable), and
+#   * the release APKs carry the trusted signer (± DRIVELINK_SIGNER_SHA256), and
+#   * SHA256SUMS.txt matches the uploaded files.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID of the successful 'DriveLink CI & Android Release Build' run"
+        required: true
+        type: string
+      tag:
+        description: "Release tag to create (e.g. v1.4.1)"
+        required: true
+        default: "v1.4.1"
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
+          echo "$info" | jq -e '.conclusion == "success"' >/dev/null
+          echo "$info" | jq -e '.head_sha != null' >/dev/null
+          workflow=$(echo "$info" | jq -r .name)
+          [[ $workflow == "DriveLink CI & Android Release Build" ]]
+          head_sha=$(echo "$info" | jq -r .head_sha)
+          echo "Source run $RUN_ID succeeded for $head_sha"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android build-tools (for aapt/apksigner)
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "build-tools;35.0.0" >/dev/null
+          printf '%s\n' "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$RUN_ID" -n "drivelink-release-$HEAD_SHA" -D dist
+          ls -l dist
+      - name: Re-verify every APK and checksum before publishing
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd dist
+          mapfile -t files < <(ls *.apk)
+          [[ ${#files[@]} -eq 3 ]]
+          python3 - <<'PY'
+          import hashlib, subprocess, sys
+          expected = {
+              "DriveLink-Standard.apk": ("app.drivelink.cast", "3", "1.4.1"),
+              "DriveLink-FullTouch.apk": ("app.drivelink.cast.touch", "3", "1.4.1"),
+              "DriveLink-Receiver.apk": ("app.drivelink.receiver", "3", "1.4.1"),
+          }
+          sums = {}
+          for line in open("SHA256SUMS.txt"):
+              digest, name = line.split()
+              sums[name.lstrip("*")] = digest
+          for apk, (pid, code, name) in expected.items():
+              digest, _ = hashlib.sha256(open(apk, "rb").read()).hexdigest(), None
+              if digest != sums.get(apk):
+                  sys.exit(f"checksum mismatch for {apk}")
+              badging = subprocess.run(["aapt", "dump", "badging", apk], capture_output=True, text=True, check=True).stdout
+              for token in (f"package: name='{pid}'", f"versionCode='{code}'", f"versionName='{name}'", "sdkVersion:'26'"):
+                  if token not in badging:
+                      sys.exit(f"{apk}: missing {token}")
+              if "application-debuggable" in badging:
+                  sys.exit(f"{apk}: release APK is debuggable")
+              out = subprocess.run(["apksigner", "verify", "--verbose", "--print-certs", apk], capture_output=True, text=True)
+              if out.returncode != 0:
+                  sys.exit(f"{apk}: signature verification failed\n{out.stdout}\n{out.stderr}")
+              if "Android Debug" in out.stdout:
+                  sys.exit(f"{apk}: signed with the Android debug key")
+              print(f"OK {apk}: {pid} {name} ({code})")
+          PY
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@28ab305d0ffa26d60ec4bd614126329e26c7a0ec # v3.0.4
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: "DriveLink ${{ inputs.tag }}"
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
+          body_path: DriveLink/releases/v1.4.1/RELEASE_NOTES.md
+          files: |
+            dist/DriveLink-Standard.apk
+            dist/DriveLink-FullTouch.apk
+            dist/DriveLink-Receiver.apk
+            dist/SHA256SUMS.txt
+            dist/SIGNING_REPORT.md
+      - name: Upload published artifact manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-published-${{ inputs.tag }}
+          path: dist/
+          if-no-files-found: error

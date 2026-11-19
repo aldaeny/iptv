@@ -737,7 +737,8 @@
 
     function initVideoDecoder(mime, overrideCodec) {
       if (!('VideoDecoder' in window)) {
-        document.getElementById('codecBadge').textContent = 'NO WEBCODECS';
+        // Report the stream's real codec in the HUD; the notice tile explains why no frame is drawn.
+        document.getElementById('codecBadge').textContent = (mime || '').includes('hevc') ? 'H.265' : 'H.264';
         document.getElementById('diagStateValue').textContent = isArabic
           ? 'المتصفح لا يدعم WebCodecs (استخدم Chrome أو Edge)'
           : 'WebCodecs unsupported in this browser (use Chrome/Edge)';
@@ -1018,6 +1019,17 @@
         initVideoDecoder(msg.mime || 'video/avc');
         initAudioDecoder();
       }
+    }
+
+    // Reverse-touch back-channel: canvas pointer -> normalised touch frame for the receiver.
+    // Guarded by socket state so gestures during (re)connect are dropped instead of throwing.
+    function sendCanvasTouch(ev, action) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+      ws.send(JSON.stringify({ type: 'touch', x, y, action }));
     }
 
     let pointerDown = false;
