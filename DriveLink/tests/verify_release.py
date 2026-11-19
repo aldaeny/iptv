@@ -338,6 +338,51 @@ def check_android_manifest() -> None:
     ok("manifest permissions and flavour separation intact")
 
 
+def check_release_workflows() -> None:
+    """Gate 11: publication must stay impossible for stale or unsigned artifacts."""
+    build = (ROOT.parent / ".github/workflows/drivelink-android-release.yml").read_text()
+    publish = (ROOT.parent / ".github/workflows/drivelink-publish-release.yml").read_text()
+
+    # Signed builds and keystore-less builds must not share an artifact name.
+    if "id: signmode" not in build:
+        fail("release build workflow lost the signmode step id (artifact naming)")
+    for token in ('echo "mode=signed" >> "$GITHUB_OUTPUT"',
+                  'echo "mode=unsigned" >> "$GITHUB_OUTPUT"'):
+        if token not in build:
+            fail(f"release build workflow does not report signing mode: {token}")
+    if "name: drivelink-${{ steps.signmode.outputs.mode }}-${{ github.sha }}" not in build:
+        fail("release artifacts are not separated into signed/unsigned namespaces")
+    if re.search(r"^\s*name: drivelink-release-\$\{\{ github\.sha \}\}", build, re.M):
+        fail("release build workflow still uses one artifact name for signed and unsigned")
+
+    # Publication preconditions.
+    checks = {
+        'git merge-base --is-ancestor "$head_sha" origin/master':
+            "publish workflow does not require head_sha to be an ancestor of origin/master",
+        '[[ $(git rev-parse origin/master) == "$head_sha" ]]':
+            "publish workflow does not require head_sha to be the origin/master tip",
+        "MAX_RUN_AGE_DAYS": "publish workflow has no stale-run age limit",
+        '.repository.full_name == $repo': "publish workflow does not verify the run's repository",
+        '.event == "workflow_dispatch"': "publish workflow accepts non-dispatch runs",
+        'any(.artifacts[]?; .name == $n and .expired == false)':
+            "publish workflow does not require the signed artifact to exist",
+        "drivelink-release-[0-9a-f]{40}": "publish workflow does not pin the signed artifact name",
+        '[[ $RUN_ID =~ ^[0-9]{6,20}$ ]]': "publish workflow does not validate run_id",
+    }
+    for token, message in checks.items():
+        if token not in publish:
+            fail(message)
+    if "git checkout --detach" not in publish:
+        fail("publish workflow does not re-gate the exact commit it publishes")
+    if "verify_release.py" not in publish:
+        fail("publish workflow does not run the source release gate")
+    # Comments may explain the quarantine; executable lines must never touch it.
+    if any("drivelink-unsigned-" in ln and not ln.strip().startswith("#")
+           for ln in publish.splitlines()):
+        fail("publish workflow references the unsigned artifact namespace")
+    ok("release workflows: signed/unsigned separated, stale+foreign runs refused")
+
+
 def main() -> int:
     check_identities()
     check_gradle_dsl_scopes()
@@ -349,6 +394,7 @@ def main() -> int:
     check_ios()
     check_protocol()
     check_android_manifest()
+    check_release_workflows()
 
     for note in NOTES:
         print(f"PASS  {note}")
