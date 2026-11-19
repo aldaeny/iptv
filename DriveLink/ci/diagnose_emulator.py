@@ -6,6 +6,21 @@ from zipfile import ZipFile
 
 with ZipFile(sys.argv[1]) as archive:
     files = [n for n in archive.namelist() if re.search(r'/\d+_Smoke test .*\.txt$', n)]
+    for name in archive.namelist():
+        if not re.search(r'/\d+_Verify packages, versions, signing and SHA-256.txt$', name):
+            continue
+        data = archive.read(name).decode('utf-8-sig', errors='replace')
+        # Only diagnostic categories; don't forward arguments/environment to annotations.
+        for line in data.split('##[endgroup]')[-1].splitlines():
+            if re.search(r'(?:Standard|FullTouch|Receiver): (?:incorrect|unexpected|missing|unsafe|overlay|projection)', line):
+                print('::notice::Manifest policy: ' + line[:240])
+            elif re.search(r'(?:Exception|Error)(?::| in thread)', line):
+                print('::notice::APK analyzer: ' + re.sub(r'https?://\S+', '[url]', line)[:240])
+            elif 'not found' in line or 'No such file' in line:
+                print('::notice::Analyzer dependency: ' + line[:240])
+    if not files:
+        print('::notice::No archived smoke step; check preceding step conclusions')
+        sys.exit(0)
     if len(files) != 1:
         sys.exit('Expected one archived emulator step')
     raw = archive.read(files[0])

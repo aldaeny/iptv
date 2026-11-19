@@ -11,6 +11,10 @@ name: DriveLink CI & Android Release Build
 on:
   workflow_dispatch:
     inputs:
+      diagnostics_only:
+        description: Inspect the previous run without rebuilding or using signing inputs
+        type: boolean
+        default: false
       previous_run:
         description: Optional previous DriveLink run ID for emulator failure diagnosis
         type: string
@@ -60,6 +64,7 @@ jobs:
           gh api "$base/logs" > "$RUNNER_TEMP/run-logs.zip"
           python3 DriveLink/ci/diagnose_emulator.py "$RUNNER_TEMP/run-logs.zip"
   verify:
+    if: github.event_name != 'workflow_dispatch' || !inputs.diagnostics_only
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
