@@ -218,14 +218,17 @@ jobs:
           echo no | "$tools/avdmanager" create avd -n drivelink-test -k "$image"
           test -s "$ANDROID_AVD_HOME/drivelink-test.ini"
           "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx drivelink-test
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          adb start-server
+          adb devices -l
           args=()
           if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then args+=(-accel off); fi
-          "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -skin 480x800 -no-boot-anim -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
-          deadline=$((SECONDS + 600))
-          until [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
-            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
+          deadline=$((SECONDS + 900))
+          until [[ $(timeout 8s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then echo "::error::Emulator exited or boot deadline reached; KVM fallback=${args[*]:-none}"; tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
             sleep 3
           done
           dir="$RUNNER_TEMP/drivelink-debug"
@@ -237,6 +240,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/drivelink-logs"
           [[ ! -f "$RUNNER_TEMP/emulator.log" ]] || cp "$RUNNER_TEMP/emulator.log" "$RUNNER_TEMP/drivelink-logs"
+          find "$RUNNER_TEMP"/drivelink-{release,unsigned,debug} -maxdepth 1 \( -name "*-AndroidManifest.xml" -o -name "SIGNING_REPORT.md" -o -name "SHA256SUMS.txt" \) -exec cp --parents {} "$RUNNER_TEMP/drivelink-logs" \; 2>/dev/null || true
           shopt -s globstar nullglob
           python3 DriveLink/ci/annotate_errors.py "$RUNNER_TEMP"/drivelink-logs/*.log DriveLink/**/lint-results*.txt
           find DriveLink -name "lint-results*.txt" -o -name "lint-results*.html" | while read -r f; do
@@ -313,7 +317,7 @@ jobs:
   ios:
     if: github.event_name == 'workflow_dispatch'
     needs: verify
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

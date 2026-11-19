@@ -36,6 +36,9 @@ shopt -s nullglob
     for member in AndroidManifest.xml classes.dex resources.arsc; do
       [[ $(unzip -p "$apk" "$member" | wc -c) -gt 0 ]] || { echo "$apk: missing/empty $member" >&2; exit 1; }
     done
+    label=${names[i]#DriveLink-}; label=${label%.apk}
+    "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$apk" > "$out/$label-AndroidManifest.xml"
+    python3 "$root/tools/verify-apk-manifest.py" "$label" < "$out/$label-AndroidManifest.xml"
     badging=$(aapt dump badging "$apk")
     package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")
     [[ $package == "${ids[i]}" ]]
