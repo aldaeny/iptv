@@ -354,6 +354,8 @@ def check_release_workflows() -> None:
         fail("release artifacts are not separated into signed/unsigned namespaces")
     if re.search(r"^\s*name: drivelink-release-\$\{\{ github\.sha \}\}", build, re.M):
         fail("release build workflow still uses one artifact name for signed and unsigned")
+    elif build.count("drivelink-release/DriveLink-") < 3:
+        fail("build workflow does not upload the three release APKs by explicit path")
 
     # Publication preconditions.
     checks = {
@@ -368,9 +370,23 @@ def check_release_workflows() -> None:
             "publish workflow does not require the signed artifact to exist",
         "drivelink-release-[0-9a-f]{40}": "publish workflow does not pin the signed artifact name",
         '[[ $RUN_ID =~ ^[0-9]{6,20}$ ]]': "publish workflow does not validate run_id",
+        # Every platform bundle identifier must be an explicit literal: deriving it by
+        # stripping an IPA filename suffix produced "app.drivelink.cast.app-unsigned.ipa".
     }
     for token, message in checks.items():
         if token not in publish:
+            fail(message)
+
+    # Build-side guarantees: literal IPA identities and an explicit 3-APK upload.
+    for token, message in {
+        "DriveLink-Full-unsigned.ipa app.drivelink.cast.app":
+            "build workflow does not verify the Full IPA bundle identifier literally",
+        "DriveLink-Free-unsigned.ipa app.drivelink.cast.app.free":
+            "build workflow does not verify the Free IPA bundle identifier literally",
+        "Assert the release artifact set is complete":
+            "build workflow uploads without asserting the three APKs are present",
+    }.items():
+        if token not in build:
             fail(message)
     if "git checkout --detach" not in publish:
         fail("publish workflow does not re-gate the exact commit it publishes")

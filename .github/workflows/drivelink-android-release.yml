@@ -56,12 +56,13 @@ jobs:
         run: node DriveLink/tests/simulator_ui_wiring.mjs
       - name: Publish guard self-test (stale/foreign/unsigned runs must be refused)
         run: python3 DriveLink/tests/publish_guard_selftest.py
-      - name: Go simulator unit tests (race detector)
+      - name: Set up Go 1.22
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: "1.22"
           cache: false
-      - run: |
+      - name: Go simulator unit tests (race detector) + reproducible binaries
+        run: |
           set -o pipefail
           cd DriveLink/simulator
           go vet ./...
@@ -148,6 +149,13 @@ jobs:
       - name: Build release variants (unsigned when no keystore)
         run: |
           set -o pipefail
+          # A release build must never fall back to the debug key. When the keystore
+          # secrets are present, prove the release signing config is actually used.
+          if [ "$DRIVELINK_RELEASE_SIGNABLE" = "true" ]; then
+            echo "Keystore configured: release variants will be signed with the release key."
+          else
+            echo "::warning::No keystore: release variants stay UNSIGNED (drivelink-unsigned-<sha>, not publishable)."
+          fi
           (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardRelease :app:assembleFullTouchRelease)
           (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleRelease)
       - name: Verify packages, versions, signing and SHA-256
@@ -173,14 +181,30 @@ jobs:
           find DriveLink -name "lint-results*.txt" -o -name "lint-results*.html" | while read -r f; do
             cp --parents "$f" "$RUNNER_TEMP/drivelink-logs" || true
           done
+      - name: Assert the release artifact set is complete before uploading
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/drivelink-release"
+          for f in DriveLink-Standard.apk DriveLink-FullTouch.apk DriveLink-Receiver.apk SHA256SUMS.txt SIGNING_REPORT.md; do
+            [[ -s "$d/$f" ]] || { echo "missing or empty release artifact: $f" >&2; exit 1; }
+          done
+          [[ $(find "$d" -maxdepth 1 -name '*.apk' | wc -l) -eq 3 ]] || { echo "expected exactly 3 APKs" >&2; exit 1; }
+          (cd "$d" && sha256sum -c SHA256SUMS.txt)
+          ls -l "$d"
       - name: Upload release artifacts (APK + SIGNING_REPORT + SHA256SUMS)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          # Signed builds only ever land under drivelink-release-<sha>. Builds
-          # without a keystore are quarantined under drivelink-unsigned-<sha>, a
-          # name the publish workflow refuses to download.
+          # Explicit file list: never upload the whole directory (the iOS "Payload/"
+          # bug taught us that globs and prefixes are fragile). Signed builds only
+          # ever land under drivelink-release-<sha>; keystore-less builds are
+          # quarantined as drivelink-unsigned-<sha>, which publish refuses.
           name: drivelink-${{ steps.signmode.outputs.mode }}-${{ github.sha }}
-          path: ${{ runner.temp }}/drivelink-release/
+          path: |
+            ${{ runner.temp }}/drivelink-release/DriveLink-Standard.apk
+            ${{ runner.temp }}/drivelink-release/DriveLink-FullTouch.apk
+            ${{ runner.temp }}/drivelink-release/DriveLink-Receiver.apk
+            ${{ runner.temp }}/drivelink-release/SHA256SUMS.txt
+            ${{ runner.temp }}/drivelink-release/SIGNING_REPORT.md
           if-no-files-found: error
           retention-days: 90
       - name: Upload debug artifacts
@@ -242,14 +266,24 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/drivelink-ios"
           rm -rf Payload
-          for ipa in *.ipa; do
+          # Explicit ipa -> bundle id map. The previous "app.drivelink.cast.app${ipa#DriveLink-Full}"
+          # evaluated to app.drivelink.cast.app-unsigned.ipa (suffix stripping, not a prefix match),
+          # which could never match a real Info.plist identifier.
+          while read -r ipa expected_id; do
+            [[ -f $ipa ]] || { echo "missing $ipa" >&2; exit 1; }
             unzip -q "$ipa" -d "check-${ipa%.ipa}"
             plist="check-${ipa%.ipa}/Payload/BydWirelessMirror.app/Info.plist"
+            [[ -f $plist ]] || { echo "missing $plist inside $ipa" >&2; exit 1; }
+            actual_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")
+            echo "$ipa: $actual_id"
             /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" | grep -Fx 1.4.1
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist" | grep -Fx 3
-            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" | grep -Fx "app.drivelink.cast.app${ipa#DriveLink-Full}"
-          done
-          shasum -a 256 *.ipa > SHA256SUMS.txt
+            [[ $actual_id == "$expected_id" ]] || { echo "$ipa: bundle id $actual_id != $expected_id" >&2; exit 1; }
+          done <<'MAP'
+          DriveLink-Full-unsigned.ipa app.drivelink.cast.app
+          DriveLink-Free-unsigned.ipa app.drivelink.cast.app.free
+          MAP
+          shasum -a 256 ./*.ipa > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Upload unsigned iOS IPAs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
