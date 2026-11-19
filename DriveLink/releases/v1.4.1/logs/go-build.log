@@ -1,0 +1,9 @@
+go version go1.24.11 linux/amd64
+=== RUN   TestHandshakeRawX963AndSpki
+--- PASS: TestHandshakeRawX963AndSpki (0.00s)
+=== RUN   TestFrameReassemblerOutOfOrder
+--- PASS: TestFrameReassemblerOutOfOrder (0.00s)
+=== RUN   TestAntiReplayWindowRejectsDuplicatesAndOldPackets
+--- PASS: TestAntiReplayWindowRejectsDuplicatesAndOldPackets (0.00s)
+PASS
+ok  	byd-simulator	1.010s

@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+WRAPPER_JAR="$DIR/gradle/wrapper/gradle-wrapper.jar"
+
+if [ ! -f "$WRAPPER_JAR" ]; then
+  if command -v gradle >/dev/null 2>&1; then
+    echo "Bootstrapping Gradle Wrapper 8.10.2..."
+    (cd "$DIR" && gradle wrapper --gradle-version 8.10.2)
+  else
+    echo "Error: $WRAPPER_JAR not found and 'gradle' is not in PATH." >&2
+    echo "Open this folder in Android Studio or run: gradle wrapper --gradle-version 8.10.2" >&2
+    exit 1
+  fi
+fi
+
+exec java -Xmx2048m -jar "$WRAPPER_JAR" "$@"

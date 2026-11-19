@@ -1,0 +1,2 @@
+Loopback A: PASS actual TCP pairing, encrypted heartbeat, UDP-to-WebSocket bytes, session stop
+Loopback B: PASS actual TCP pairing, encrypted heartbeat, UDP-to-WebSocket bytes, session stop

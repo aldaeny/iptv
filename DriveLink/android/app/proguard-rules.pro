@@ -1,0 +1,2 @@
+-keep class app.drivelink.cast.** { *; }
+-dontwarn kotlinx.coroutines.**

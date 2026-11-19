@@ -1,0 +1,15 @@
+Linux
+java unavailable
+gradle unavailable
+adb unavailable
+apksigner unavailable
+xcodebuild unavailable
+xcodegen unavailable
+=== android ===
+./gradlew: 17: exec: java: not found
+exit=127
+=== receiver-dilink ===
+./gradlew: 17: exec: java: not found
+exit=127
+000 https://dl.google.com/android/repository/repository2-1.xml
+000 https://services.gradle.org/distributions/gradle-8.10.2-bin.zip

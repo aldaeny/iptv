@@ -1,0 +1,88 @@
+{
+  "protocolName": "BYD-Wireless-Mirror-Protocol",
+  "version": "1.0.0",
+  "serviceDiscovery": {
+    "nsdServiceType": "_byd-mirror._tcp.",
+    "controlPort": 47810,
+    "mediaUdpPort": 47811,
+    "wifiDirectSsidPrefix": "DIRECT-BYD-",
+    "hotspotSsidPatterns": [
+      "BYD-DiLink-",
+      "BYD-Auto-",
+      "BYD-Link-"
+    ]
+  },
+  "security": {
+    "keyExchange": "ECDH-P256",
+    "kdf": "HKDF-SHA256",
+    "kdfInfo": "BYD-MIRROR-SESSION-KEY-V1",
+    "cipher": "AES-256-GCM",
+    "nonceSizeBytes": 12,
+    "tagSizeBytes": 16,
+    "pairingTimeoutSeconds": 30
+  },
+  "packetFraming": {
+    "magicBytes": "0x4259",
+    "headerSizeBytes": 16,
+    "maxPayloadBytes": 65536,
+    "opcodes": {
+      "HELLO_SYN": 1,
+      "HELLO_ACK": 2,
+      "KEY_EXCHANGE_INIT": 3,
+      "KEY_EXCHANGE_RESP": 4,
+      "CAPABILITIES_REQ": 5,
+      "CAPABILITIES_RESP": 6,
+      "SESSION_START": 7,
+      "SESSION_STOP": 8,
+      "ORIENTATION_CHANGE": 9,
+      "VIDEO_NALU": 16,
+      "AUDIO_AAC": 17,
+      "KEYFRAME_REQUEST": 18,
+      "VIDEO_NALU_FRAG": 19,
+      "TOUCH_EVENT": 20,
+      "HEARTBEAT_PING": 32,
+      "HEARTBEAT_PONG": 33,
+      "QOS_TELEMETRY": 34,
+      "THERMAL_THROTTLE": 35
+    }
+  },
+  "bydDisplayProfiles": [
+    {
+      "id": "dilink_15_6_fhd",
+      "label": "BYD DiLink 15.6\" Rotating FHD",
+      "diLinkVersions": ["4.0", "5.0"],
+      "landscape": { "width": 1920, "height": 1080 },
+      "portrait": { "width": 1080, "height": 1920 },
+      "maxFps": 60,
+      "recommendedBitrateMbps": 14,
+      "codecs": ["H265", "H264"]
+    },
+    {
+      "id": "dilink_12_8_fhd",
+      "label": "BYD DiLink 12.8\" Rotating FHD",
+      "diLinkVersions": ["3.0", "4.0", "5.0"],
+      "landscape": { "width": 1920, "height": 1080 },
+      "portrait": { "width": 1080, "height": 1920 },
+      "maxFps": 60,
+      "recommendedBitrateMbps": 12,
+      "codecs": ["H264", "H265"]
+    },
+    {
+      "id": "dilink_10_1_hd",
+      "label": "BYD DiLink 10.1\" HD",
+      "diLinkVersions": ["3.0", "4.0"],
+      "landscape": { "width": 1280, "height": 720 },
+      "portrait": { "width": 720, "height": 1280 },
+      "maxFps": 30,
+      "recommendedBitrateMbps": 6,
+      "codecs": ["H264"]
+    }
+  ],
+  "qosTargets": {
+    "targetLatencyMs": 45,
+    "maxAcceptableJitterMs": 18,
+    "keyframeIntervalSeconds": 2,
+    "audioSampleRateHz": 48000,
+    "audioChannels": 2
+  }
+}
