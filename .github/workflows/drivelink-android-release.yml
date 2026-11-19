@@ -1,0 +1,73 @@
+name: DriveLink Android Release Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          printf '%s\n' "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - name: Verify identities and build Debug
+        run: |
+          python3 DriveLink/tests/verify_isolation.py
+          python3 DriveLink/tests/verify_protocol.py
+          (cd DriveLink/android && ./gradlew --no-daemon :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest :app:lintStandardDebug :app:lintFullTouchDebug :app:assembleStandardDebug :app:assembleFullTouchDebug)
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug)
+          bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
+      - name: Upload verified Debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-android-debug-${{ github.sha }}
+          path: ${{ runner.temp }}/drivelink-debug
+          if-no-files-found: error
+      - name: Build and verify signed Release
+        env:
+          DRIVELINK_KEYSTORE_BASE64: ${{ secrets.DRIVELINK_KEYSTORE_BASE64 }}
+          DRIVELINK_KEYSTORE_PASSWORD: ${{ secrets.DRIVELINK_KEYSTORE_PASSWORD }}
+          DRIVELINK_KEY_ALIAS: ${{ secrets.DRIVELINK_KEY_ALIAS }}
+          DRIVELINK_KEY_PASSWORD: ${{ secrets.DRIVELINK_KEY_PASSWORD }}
+          DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
+        run: |
+          for name in DRIVELINK_KEYSTORE_BASE64 DRIVELINK_KEYSTORE_PASSWORD DRIVELINK_KEY_ALIAS DRIVELINK_KEY_PASSWORD DRIVELINK_SIGNER_SHA256; do
+            if [[ -z ${!name} ]]; then
+              echo "::error::Release blocked: missing $name. Debug APKs are not Release APKs."
+              exit 1
+            fi
+          done
+          umask 077
+          export DRIVELINK_KEYSTORE_PATH
+          DRIVELINK_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/drivelink-key.XXXXXXXX")
+          trap 'rm -f -- "$DRIVELINK_KEYSTORE_PATH"' EXIT
+          printf '%s' "$DRIVELINK_KEYSTORE_BASE64" | base64 --decode > "$DRIVELINK_KEYSTORE_PATH"
+          unset DRIVELINK_KEYSTORE_BASE64
+          test -s "$DRIVELINK_KEYSTORE_PATH"
+          (cd DriveLink/android && ./gradlew --no-daemon :app:assembleStandardRelease :app:assembleFullTouchRelease)
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon :app:assembleRelease)
+          out=DriveLink/releases/v1.4.1/android
+          bash DriveLink/tools/verify-android-build.sh release DriveLink "$out"
+          {
+            printf '# DriveLink Android 1.4.1 — CI build\n\nCommit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Run: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'Debug and Release built. Package metadata, signatures and SHA-256 verified. Device installation and vehicle compatibility were not tested.\n'
+          } > "$out/BUILD_REPORT.md"
+      - name: Upload verified Release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-android-release-${{ github.sha }}
+          path: DriveLink/releases/v1.4.1/android/
+          if-no-files-found: error

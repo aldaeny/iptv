@@ -1,0 +1,2 @@
+-keep class app.drivelink.receiver.** { *; }
+-dontwarn kotlinx.coroutines.**

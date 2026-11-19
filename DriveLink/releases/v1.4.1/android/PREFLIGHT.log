@@ -1,0 +1,8 @@
+=== android ===
+./gradlew: 17: exec: java: not found
+exit=127
+=== receiver-dilink ===
+./gradlew: 17: exec: java: not found
+exit=127
+ls: cannot access '/dev/kvm': No such file or directory
+ls: cannot access '/dev/bus/usb': No such file or directory
