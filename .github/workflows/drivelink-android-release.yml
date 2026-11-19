@@ -207,7 +207,12 @@ jobs:
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           image='system-images;android-35;google_apis;x86_64'
           "$tools/sdkmanager" emulator "$image"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/drivelink-android-user"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo no | "$tools/avdmanager" create avd -n drivelink-test -k "$image"
+          test -s "$ANDROID_AVD_HOME/drivelink-test.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx drivelink-test
           args=()
           if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then args+=(-accel off); fi
           "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
@@ -215,12 +220,13 @@ jobs:
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
           deadline=$((SECONDS + 600))
           until [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
-            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then tail -50 "$RUNNER_TEMP/emulator.log"; exit 1; fi
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
             sleep 3
           done
           dir="$RUNNER_TEMP/drivelink-debug"
           if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
+          while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
       - name: Collect build logs
         if: always()
         run: |
