@@ -16,6 +16,8 @@ import androidx.core.app.NotificationCompat
 import app.drivelink.cast.BuildConfig
 import app.drivelink.cast.MainActivity
 import app.drivelink.cast.R
+import app.drivelink.cast.core.model.ConnectionState
+import app.drivelink.cast.core.model.VideoCodec
 import app.drivelink.cast.core.session.MirrorSessionCoordinator
 import app.drivelink.cast.core.streaming.AudioCaptureEncoder
 import app.drivelink.cast.core.streaming.ScreenCaptureEncoder
@@ -87,6 +89,12 @@ class MirrorForegroundService : Service() {
             onEncodedNalu = { nalu, ptsUs ->
                 protocol.sendVideoFrame(nalu, ptsUs)
             },
+            onCodecFallback = { mime ->
+                val session = MirrorSessionCoordinator.connectionState.value as? ConnectionState.Streaming
+                    ?: error("Session no longer active")
+                val codec = VideoCodec.entries.first { it.mimeType == mime }
+                protocol.startMediaSession(session.profile.copy(codec = codec), session.encryptedChannelFingerprint)
+            },
             onProjectionStopped = {
                 stopSelf()
             }
@@ -138,7 +146,7 @@ class MirrorForegroundService : Service() {
     }
 
     private fun ensureNotificationChannel() {
-        val manager = getSystemService(NotificationManager::class.java)
+        val manager = getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
             "DriveLink Cast",

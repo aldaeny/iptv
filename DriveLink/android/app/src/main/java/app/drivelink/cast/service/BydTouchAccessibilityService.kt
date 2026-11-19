@@ -40,6 +40,7 @@ class BydTouchAccessibilityService : AccessibilityService() {
     }
 
     fun injectNormalizedTouch(xNorm: Float, yNorm: Float, action: Byte) {
+        if (!xNorm.isFinite() || !yNorm.isFinite()) return
         mainHandler.post {
             val metrics = resources.displayMetrics
             val x = xNorm.coerceIn(0f, 1f) * metrics.widthPixels

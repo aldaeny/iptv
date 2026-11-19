@@ -55,7 +55,8 @@ data class BydPacket(
 
 data class HandshakeResult(
     val fingerprint: String,
-    val pairingPin: String
+    val pairingPin: String,
+    val supportsHevc: Boolean
 )
 
 /**
@@ -144,6 +145,7 @@ class BydProtocolWrapper(
             socket.soTimeout = 0
             HandshakeResult(
                 fingerprint = cryptoManager.sessionFingerprint,
+                supportsHevc = capAck.payload.decodeToString().substringAfter('|', "").split(',').any { it.trim() == "H265" },
                 pairingPin = cryptoManager.pairingPin
             )
         }.onFailure {

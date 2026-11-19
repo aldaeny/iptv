@@ -65,6 +65,10 @@ object MirrorSessionCoordinator {
     var onReconfigureEncoder: ((DisplayProfile, DisplayOrientation) -> Unit)? = null
     var onStopServices: (() -> Unit)? = null
 
+    private var peerSupportsHevc = false
+
+    private fun supportedCodec(codec: VideoCodec) = if (peerSupportsHevc) codec else VideoCodec.H264
+
     private var pingJob: Job? = null
     private var reconnectJob: Job? = null
     private var lastConnectedDevice: BydDevice? = null
@@ -89,7 +93,7 @@ object MirrorSessionCoordinator {
 
     fun setPreferredCodec(codec: VideoCodec) {
         _preferredCodec.value = codec
-        val updated = _activeProfile.value.copy(codec = codec)
+        val updated = _activeProfile.value.copy(codec = supportedCodec(codec))
         _activeProfile.value = updated
         if (_connectionState.value is ConnectionState.Streaming) {
             scope.launch {
@@ -103,7 +107,7 @@ object MirrorSessionCoordinator {
     fun selectProfileOverride(profile: DisplayProfile?) {
         _profileOverride.value = profile
         if (profile != null) {
-            val withCodec = profile.copy(codec = _preferredCodec.value)
+            val withCodec = profile.copy(codec = supportedCodec(_preferredCodec.value))
             _activeProfile.value = withCodec
             if (_connectionState.value is ConnectionState.Streaming) {
                 onReconfigureEncoder?.invoke(withCodec, _orientation.value)
@@ -128,7 +132,10 @@ object MirrorSessionCoordinator {
         result.fold(
             onSuccess = { handshake ->
                 // A discovery ID is not a persistent signing key. Reverify every fresh ECDH session.
-                _pendingPairing.value = PairingPrompt(device, negotiated, handshake.pairingPin, handshake.fingerprint)
+                peerSupportsHevc = handshake.supportsHevc
+                val profile = negotiated.copy(codec = supportedCodec(negotiated.codec))
+                _activeProfile.value = profile
+                _pendingPairing.value = PairingPrompt(device, profile, handshake.pairingPin, handshake.fingerprint)
             },
             onFailure = { error ->
                 _connectionState.value = ConnectionState.Error(
@@ -170,6 +177,7 @@ object MirrorSessionCoordinator {
             orientation = _orientation.value,
             encryptedChannelFingerprint = fingerprint
         )
+        onReconfigureEncoder?.invoke(profile, _orientation.value)
         startTelemetryLoops()
     }
 
@@ -268,7 +276,10 @@ object MirrorSessionCoordinator {
                 if (result.isSuccess) {
                     val hs = result.getOrThrow()
                     _connectionState.value = ConnectionState.KeyExchange(device)
-                    _pendingPairing.value = PairingPrompt(device, profile, hs.pairingPin, hs.fingerprint)
+                    peerSupportsHevc = hs.supportsHevc
+                    val selected = profile.copy(codec = supportedCodec(profile.codec))
+                    _activeProfile.value = selected
+                    _pendingPairing.value = PairingPrompt(device, selected, hs.pairingPin, hs.fingerprint)
                     return@launch
                 }
             }

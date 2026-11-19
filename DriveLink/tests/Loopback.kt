@@ -25,7 +25,7 @@ fun main() = runBlocking<Unit> {
     repeat(2) { round ->
         val hs = client.connectAndHandshake(peer, profile).getOrThrow()
         try {
-            check(hs.pairingPin.length == 6)
+            check(hs.pairingPin.length == 6 && !hs.supportsHevc)
             check(runCatching { client.startMediaSession(profile, "stale confirmation") }.isFailure)
             client.startMediaSession(profile, hs.fingerprint)
             val pong = CompletableDeferred<Unit>()

@@ -28,6 +28,7 @@ class ScreenCaptureEncoder(
     private val mediaProjection: MediaProjection,
     private val scope: CoroutineScope,
     private val onEncodedNalu: suspend (ByteArray, Int) -> Unit,
+    private val onCodecFallback: suspend (String) -> Unit,
     private val onProjectionStopped: () -> Unit = {}
 ) {
     private var codec: MediaCodec? = null
@@ -54,6 +55,7 @@ class ScreenCaptureEncoder(
 
         val (width, height) = profile.dimensionsFor(orientation)
         val requestedMime = profile.codec.mimeType
+        var selectedMime = requestedMime
         var mediaCodec: MediaCodec? = null
         for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
             val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
@@ -72,6 +74,7 @@ class ScreenCaptureEncoder(
             }
             val candidate = runCatching { MediaCodec.createEncoderByType(candidateMime) }.getOrNull() ?: continue
             if (runCatching { candidate.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }.isSuccess) {
+                selectedMime = candidateMime
                 mediaCodec = candidate
                 break
             }
@@ -94,6 +97,10 @@ class ScreenCaptureEncoder(
         }
 
         drainJob = scope.launch(Dispatchers.Default) {
+            if (selectedMime != requestedMime && runCatching { onCodecFallback(selectedMime) }.isFailure) {
+                if (isActive) onProjectionStopped()
+                return@launch
+            }
             var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {

@@ -151,13 +151,13 @@ class BydReceiverServer(
             val hevcSupported = decoder.supportsHevcDecoder()
             val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":$hevcSupported}"""
                 .toByteArray(Charsets.UTF_8)
-            socket.use { while (isActive) {
-                val targets = resolveBroadcastAddresses()
-                for (addr in targets) {
-                    runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
+            socket.use {
+                while (isActive) {
+                    for (addr in resolveBroadcastAddresses()) {
+                        runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
+                    }
+                    delay(1_000L)
                 }
-                delay(1_000L)
-            }
             }
         }
     }
