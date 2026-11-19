@@ -14,4 +14,4 @@ if [ ! -f "$WRAPPER_JAR" ]; then
   fi
 fi
 
-exec java -Xmx2048m -jar "$WRAPPER_JAR" "$@"
+exec java -Xmx2048m -classpath "$WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain "$@"
