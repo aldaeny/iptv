@@ -138,26 +138,18 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check pyyaml
           python3 DriveLink/tests/verify_release.py
-      - name: Unit tests & lint (Standard, FullTouch, Receiver)
+      - name: Assemble release variants, unit tests and lint for both projects
         run: |
-          set -o pipefail
-          (cd DriveLink/android && ./gradlew --no-daemon --stacktrace \
-             :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest \
-             :app:lintStandardDebug :app:lintFullTouchDebug)
-          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace \
-             :app:testDebugUnitTest :app:lintDebug)
-      - name: Build release variants (unsigned when no keystore)
-        run: |
-          set -o pipefail
-          # A release build must never fall back to the debug key. When the keystore
-          # secrets are present, prove the release signing config is actually used.
-          if [ "$DRIVELINK_RELEASE_SIGNABLE" = "true" ]; then
-            echo "Keystore configured: release variants will be signed with the release key."
-          else
-            echo "::warning::No keystore: release variants stay UNSIGNED (drivelink-unsigned-<sha>, not publishable)."
-          fi
-          (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardRelease :app:assembleFullTouchRelease)
-          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleRelease)
+          set -euo pipefail
+          logs="$RUNNER_TEMP/drivelink-logs"; mkdir -p "$logs"
+          failed=0
+          (cd DriveLink/android && ./gradlew --continue --no-daemon --stacktrace \
+            :app:assembleStandardRelease :app:assembleFullTouchRelease \
+            :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest \
+            :app:lintStandardDebug :app:lintFullTouchDebug) 2>&1 | tee "$logs/senders.log" || failed=1
+          (cd DriveLink/receiver-dilink && ./gradlew --continue --no-daemon --stacktrace \
+            :app:assembleRelease :app:testDebugUnitTest :app:lintDebug) 2>&1 | tee "$logs/receiver.log" || failed=1
+          exit "$failed"
       - name: Verify packages, versions, signing and SHA-256
         env:
           DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
@@ -192,6 +184,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/drivelink-logs"
+          python3 DriveLink/ci/annotate_errors.py "$RUNNER_TEMP"/drivelink-logs/*.log
           find DriveLink -name "lint-results*.txt" -o -name "lint-results*.html" | while read -r f; do
             cp --parents "$f" "$RUNNER_TEMP/drivelink-logs" || true
           done
@@ -252,8 +245,10 @@ jobs:
           set -o pipefail
           cd DriveLink/ios && swift test 2>&1 | tee swift-test.log
       - name: Install XcodeGen
+        if: ${{ !cancelled() }}
         run: brew install xcodegen
       - name: Build Full (unsigned) + package IPA
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           cd DriveLink/ios
@@ -265,6 +260,7 @@ jobs:
           cp -R build-full/Build/Products/Release-iphoneos/BydWirelessMirror.app "$RUNNER_TEMP/drivelink-ios/Payload/"
           (cd "$RUNNER_TEMP/drivelink-ios" && zip -qry DriveLink-Full-unsigned.ipa Payload)
       - name: Build Free Sideload (unsigned) + package IPA
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           cd DriveLink/ios
@@ -309,6 +305,9 @@ jobs:
             ${{ runner.temp }}/drivelink-ios/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+      - name: Annotate native compiler diagnostics
+        if: failure()
+        run: python3 DriveLink/ci/annotate_errors.py DriveLink/ios/*.log
       - name: Upload iOS build logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
