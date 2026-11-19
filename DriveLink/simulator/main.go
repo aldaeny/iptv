@@ -22,6 +22,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -138,7 +139,9 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		ecdsaPub, ok := parsed.(interface{ ECDH() (*ecdh.PublicKey, error) })
+		ecdsaPub, ok := parsed.(interface {
+			ECDH() (*ecdh.PublicKey, error)
+		})
 		if !ok {
 			return nil, errors.New("unsupported peer public key type")
 		}
@@ -688,6 +691,12 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			}
 		}
 
+		if !s.crypto.IsActive() && opcode != opHelloSyn && opcode != opKeyExchangeInit {
+			break
+		}
+		if s.crypto.IsActive() && (opcode == opHelloSyn || opcode == opKeyExchangeInit) {
+			break
+		}
 		switch opcode {
 		case opHelloSyn:
 			if len(payload) > 0 {
@@ -859,7 +868,8 @@ func buildMDNSAnnouncement(ip4 net.IP) []byte {
 	pkt = append(pkt, srvData...)
 
 	// 3. TXT -> model=BYD DiLink 5.0
-	txt := []byte("\x14model=BYD DiLink 5.0")
+	model := "model=BYD DiLink 5.0"
+	txt := append([]byte{byte(len(model))}, model...)
 	pkt = append(pkt, instName...)
 	pkt = append(pkt, 0, 16, 0x80, 1, 0, 0, 0, 120)
 	pkt = binary.BigEndian.AppendUint16(pkt, uint16(len(txt)))
@@ -872,7 +882,17 @@ func buildMDNSAnnouncement(ip4 net.IP) []byte {
 	return pkt
 }
 
+func localBrowser(r *http.Request) bool {
+	host := r.Host
+	return (host == fmt.Sprintf("127.0.0.1:%d", webUIPort) || host == fmt.Sprintf("localhost:%d", webUIPort)) && r.Header.Get("Origin") == "http://"+host
+}
+
 func (s *SimulatorServer) handleWS(w http.ResponseWriter, r *http.Request) {
+	if !localBrowser(r) {
+		http.Error(w, "same-origin local UI required", http.StatusForbidden)
+		return
+	}
+
 	key := r.Header.Get("Sec-WebSocket-Key")
 	if key == "" {
 		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
@@ -945,7 +965,10 @@ func (s *SimulatorServer) readWSLoop(client *wsClient, br *bufio.Reader) {
 			if _, err := io.ReadFull(br, ext[:]); err != nil {
 				return
 			}
-			length = int(binary.BigEndian.Uint64(ext[:]))
+			return // UI input is small JSON, never a 64-bit media frame.
+		}
+		if !masked || length > 4096 {
+			return
 		}
 		var maskKey [4]byte
 		if masked {
@@ -969,12 +992,18 @@ func (s *SimulatorServer) readWSLoop(client *wsClient, br *bufio.Reader) {
 				Y      float32 `json:"y"`
 				Action byte    `json:"action"`
 			}
-			if json.Unmarshal(payload, &msg) == nil && msg.Type == "touch" && s.tcpOut != nil {
+			if json.Unmarshal(payload, &msg) == nil && msg.Type == "touch" {
+				s.tcpOutMu.Lock()
+				conn := s.tcpOut
+				s.tcpOutMu.Unlock()
+				if conn == nil || !s.crypto.IsActive() {
+					continue
+				}
 				tp := make([]byte, 9)
 				binary.BigEndian.PutUint32(tp[0:4], math.Float32bits(msg.X))
 				binary.BigEndian.PutUint32(tp[4:8], math.Float32bits(msg.Y))
 				tp[8] = msg.Action
-				s.sendControl(s.tcpOut, opTouchEvent, tp)
+				s.sendControl(conn, opTouchEvent, tp)
 			}
 		}
 	}
@@ -1045,7 +1074,9 @@ func openBrowser(url string) {
 }
 
 func main() {
-	ensureWindowsFirewall()
+	if os.Getenv("DRIVELINK_CONFIGURE_FIREWALL") == "1" {
+		ensureWindowsFirewall()
+	}
 	srv := NewSimulatorServer()
 	srv.startUDP()
 	srv.startTCP()
@@ -1081,5 +1112,5 @@ func main() {
 		openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webUIPort))
 	}()
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", webUIPort), mux))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", webUIPort), mux))
 }

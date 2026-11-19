@@ -53,7 +53,7 @@ class ScreenCaptureEncoder(
 
         val (width, height) = profile.dimensionsFor(orientation)
         val requestedMime = profile.codec.mimeType
-        var mediaCodec: MediaCodec? = null
+        var activeCodec: MediaCodec? = null
         for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
             val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
                 setInteger(
@@ -75,12 +75,16 @@ class ScreenCaptureEncoder(
                 }
             }.getOrNull()
             if (created != null) {
-                mediaCodec = created
+                activeCodec = created
                 break
             }
         }
-        val activeCodec = requireNotNull(mediaCodec) { "No hardware video encoder available" }
-        val surface = activeCodec.createInputSurface()
+        val selectedMime = activeCodec?.let { it.codecInfo.mimeType } ?: requestedMime
+        if (selectedMime != requestedMime && runCatching { onCodecFallback(selectedMime) }.isFailure) {
+            if (isActive) onProjectionStopped()
+            return
+        }
+        val surface = activeCodec!!.createInputSurface()
         activeCodec.start()
 
         val display = mediaProjection.createVirtualDisplay(
@@ -99,9 +103,13 @@ class ScreenCaptureEncoder(
         virtualDisplay = display
 
         drainJob = scope.launch(Dispatchers.Default) {
+            var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = runCatching { activeCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrDefault(-1)
+                val index = runCatching { activeCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrElse {
+                    if (isActive) onProjectionStopped()
+                    return@launch
+                }
                 if (index >= 0) {
                     val outBuffer = activeCodec.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
@@ -163,5 +171,9 @@ class ScreenCaptureEncoder(
             runCatching { mediaProjection.unregisterCallback(projectionCallback) }
             callbackRegistered = false
         }
+    }
+
+    private suspend fun onCodecFallback(selectedMime: String) {
+        // Hook for tests/verification
     }
 }

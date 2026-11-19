@@ -1,0 +1,10 @@
+JUnit version 4.13
+...........
+Time: 0.127
+
+OK (11 tests)
+
+PASS unavailable endpoint and invalid port
+PASS handshake read timeout
+PASS encrypted TCP heartbeat and fragmented UDP receipt, session 1
+PASS encrypted TCP heartbeat and fragmented UDP receipt, session 2

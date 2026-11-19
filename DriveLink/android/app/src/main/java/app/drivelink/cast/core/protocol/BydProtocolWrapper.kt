@@ -55,7 +55,8 @@ data class BydPacket(
 
 data class HandshakeResult(
     val fingerprint: String,
-    val pairingPin: String
+    val pairingPin: String,
+    val supportsHevc: Boolean
 )
 
 /**
@@ -75,7 +76,8 @@ class BydProtocolWrapper(
     private var outputStream: DataOutputStream? = null
     private var inputStream: DataInputStream? = null
     private var controlReaderJob: Job? = null
-    private var encryptionActive = false
+    @Volatile private var mediaStarted = false
+    @Volatile private var encryptionActive = false
     private val sentVideoFrames = AtomicInteger(0)
     @Volatile
     private var lastRxSeq = 0
@@ -87,6 +89,7 @@ class BydProtocolWrapper(
         preferredProfile: DisplayProfile
     ): Result<HandshakeResult> = withContext(Dispatchers.IO) {
         runCatching {
+            mediaStarted = false
             runCatching { udpMediaSocket?.close() }
             runCatching { controlSocket?.close() }
             sequenceCounter.set(0)
@@ -97,11 +100,10 @@ class BydProtocolWrapper(
             encryptionActive = false
             cryptoManager.reset()
 
-            val socket = Socket()
+            val socket = Socket().also { controlSocket = it }
             socket.tcpNoDelay = true
             socket.soTimeout = HANDSHAKE_READ_TIMEOUT_MS
             socket.connect(InetSocketAddress(device.hostAddress, device.controlPort), CONNECT_TIMEOUT_MS)
-            controlSocket = socket
             outputStream = DataOutputStream(socket.getOutputStream())
             inputStream = DataInputStream(socket.getInputStream())
 
@@ -143,6 +145,7 @@ class BydProtocolWrapper(
             socket.soTimeout = 0
             HandshakeResult(
                 fingerprint = cryptoManager.sessionFingerprint,
+                supportsHevc = capAck.payload.decodeToString().substringAfter('|', "").split(',').any { it.trim() == "H265" },
                 pairingPin = cryptoManager.pairingPin
             )
         }.onFailure {
@@ -157,12 +160,14 @@ class BydProtocolWrapper(
         }
     }
 
-    suspend fun startMediaSession(profile: DisplayProfile) = withContext(Dispatchers.IO) {
+    suspend fun startMediaSession(profile: DisplayProfile, fingerprint: String) = withContext(Dispatchers.IO) {
+        check(encryptionActive && cryptoManager.sessionFingerprint == fingerprint) { "Session changed; confirm the new PIN" }
         sendFrame(
             ProtocolOpcode.SESSION_START,
             profile.codec.mimeType.toByteArray(Charsets.UTF_8),
             encrypt = true
         )
+        mediaStarted = true
     }
 
     fun startControlReadLoop(
@@ -177,7 +182,7 @@ class BydProtocolWrapper(
         controlReaderJob = scope.launch(Dispatchers.IO) {
             var gracefulStop = false
             while (isActive && controlSocket?.isClosed == false) {
-                val packet = runCatching { readFrame(decrypt = encryptionActive) }.getOrNull() ?: break
+                val packet = runCatching { readFrame(decrypt = true) }.getOrNull() ?: break
                 if (packet.sequence <= lastRxSeq) break
                 lastRxSeq = packet.sequence
                 when (packet.opcode) {
@@ -233,12 +238,12 @@ class BydProtocolWrapper(
 
     suspend fun sendHeartbeatPing() = withContext(Dispatchers.IO) {
         val payload = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(System.nanoTime()).array()
-        sendFrame(ProtocolOpcode.HEARTBEAT_PING, payload, encrypt = encryptionActive)
+        sendFrame(ProtocolOpcode.HEARTBEAT_PING, payload, encrypt = true)
     }
 
     suspend fun sendOrientationChange(orientation: DisplayOrientation) = withContext(Dispatchers.IO) {
         val flag = byteArrayOf(if (orientation == DisplayOrientation.LANDSCAPE) 0x01 else 0x00)
-        sendFrame(ProtocolOpcode.ORIENTATION_CHANGE, flag, encrypt = encryptionActive)
+        sendFrame(ProtocolOpcode.ORIENTATION_CHANGE, flag, encrypt = true)
     }
 
     suspend fun sendThermalThrottleNotice(targetFps: Int, targetBitrateMbps: Int) = withContext(Dispatchers.IO) {
@@ -247,15 +252,16 @@ class BydProtocolWrapper(
             .putInt(targetFps)
             .putInt(targetBitrateMbps)
             .array()
-        sendFrame(ProtocolOpcode.THERMAL_THROTTLE, payload, encrypt = encryptionActive)
+        sendFrame(ProtocolOpcode.THERMAL_THROTTLE, payload, encrypt = true)
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
+        mediaStarted = false
         controlReaderJob?.cancel()
         controlReaderJob = null
         runCatching {
             if (controlSocket?.isConnected == true) {
-                sendFrame(ProtocolOpcode.SESSION_STOP, ByteArray(0), encrypt = encryptionActive)
+                sendFrame(ProtocolOpcode.SESSION_STOP, ByteArray(0), encrypt = true)
             }
         }
         encryptionActive = false
@@ -269,6 +275,7 @@ class BydProtocolWrapper(
     }
 
     private fun sendMediaUdp(opcode: ProtocolOpcode, rawPayload: ByteArray, timestampUs: Int) {
+        if (!mediaStarted) return
         if (opcode == ProtocolOpcode.VIDEO_NALU) {
             sentVideoFrames.incrementAndGet()
         }
@@ -316,11 +323,11 @@ class BydProtocolWrapper(
                     .putShort(totalFrags.toShort())
                     .put(rawPayload, start, chunkLen)
                     .array()
-                sendFrame(ProtocolOpcode.VIDEO_NALU_FRAG, fragPayload, timestampUs, encrypt = encryptionActive)
+                sendFrame(ProtocolOpcode.VIDEO_NALU_FRAG, fragPayload, timestampUs, encrypt = true)
             }
             return
         }
-        sendFrame(opcode, rawPayload, timestampUs, encrypt = encryptionActive)
+        sendFrame(opcode, rawPayload, timestampUs, encrypt = true)
     }
 
     private fun dispatchUdpPacket(
@@ -331,9 +338,9 @@ class BydProtocolWrapper(
         timestampUs: Int
     ) {
         val seq = udpSequenceCounter.incrementAndGet()
-        val wireSize = if (encryptionActive) rawPayload.size + ENCRYPTION_OVERHEAD_BYTES else rawPayload.size
+        val wireSize = rawPayload.size + ENCRYPTION_OVERHEAD_BYTES
         val header = buildHeader(opcode, seq, timestampUs, wireSize)
-        val payload = if (encryptionActive) cryptoManager.encrypt(rawPayload, header) else rawPayload
+        val payload = cryptoManager.encrypt(rawPayload, header)
         val packetBytes = header + payload
         udp.send(DatagramPacket(packetBytes, packetBytes.size, addr, targetMediaPort))
     }

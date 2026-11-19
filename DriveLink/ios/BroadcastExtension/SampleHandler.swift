@@ -22,6 +22,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var targetMediaPort: UInt16 = 47811
     private var activeProfile: DisplayProfile = .diLink15_6FHD
     private var handshakeComplete = false
+    private var sessionFingerprint: String?
     private var capabilitiesReady = false
     private var userStopped = false
     private var reconnectAttempts = 0
@@ -55,7 +56,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
                     annexBNalu: annexBData,
                     timestampUs: ptsUs,
-                    encrypt: self.protocolWrapper.isEncrypted
+                    encrypt: true
                 ) {
                     for packet in packets {
                         self.transport.sendControl(packet)
@@ -64,7 +65,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
                 annexBNalu: annexBData,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: true
             ) {
                 for packet in packets {
                     self.transport.sendMediaUdp(packet)
@@ -78,7 +79,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 opcode: .audioAac,
                 rawPayload: aacData,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted,
+                encrypt: true,
                 isUdpMedia: !self.useTcpMediaFallback
             ) {
                 if self.useTcpMediaFallback {
@@ -89,7 +90,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
             }
         }
 
-        try? videoEncoder?.configure(profile: activeProfile, orientation: orientation)
+        do { try videoEncoder?.configure(profile: activeProfile, orientation: orientation) } catch {
+            finishBroadcastWithError(error)
+            return
+        }
         connectTransport()
     }
 
@@ -195,7 +199,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
         case .keyExchangeResp:
             if let fingerprint = try? protocolWrapper.completeKeyExchange(responsePayload: packet.payload) {
-                sharedStore.savePairingVerification(pin: protocolWrapper.pairingPin, fingerprint: fingerprint)
+                sessionFingerprint = fingerprint
                 let capPayload = Data("\(activeProfile.id)|\(activeProfile.baseWidth)x\(activeProfile.baseHeight)@\(activeProfile.targetFps)".utf8)
                 if let capReq = try? protocolWrapper.encodeFrame(
                     opcode: .capabilitiesReq,
@@ -207,10 +211,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
             }
 
         case .capabilitiesResp:
+            guard protocolWrapper.isEncrypted, let sessionFingerprint else { return }
             capabilitiesReady = true
-            if trustedStore.isTrusted(deviceId: targetDeviceId) || sharedStore.isDeviceTrustedInGroup(targetDeviceId) {
-                activateMediaSession()
-            }
+            sharedStore.savePairingVerification(pin: protocolWrapper.pairingPin, fingerprint: sessionFingerprint)
 
         case .keyframeRequest:
             videoEncoder?.requestKeyFrame()
@@ -263,7 +266,8 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     private func activateMediaSession() {
-        guard capabilitiesReady, !handshakeComplete else { return }
+        guard capabilitiesReady, !handshakeComplete, let sessionFingerprint,
+              sharedStore.confirmedFingerprint == sessionFingerprint else { return }
         let mime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
         if let startFrame = try? protocolWrapper.encodeFrame(
             opcode: .sessionStart,
@@ -288,7 +292,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             if let pingFrame = try? self.protocolWrapper.encodeFrame(
                 opcode: .heartbeatPing,
                 rawPayload: payload,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: true
             ) {
                 self.transport.sendControl(pingFrame)
             }

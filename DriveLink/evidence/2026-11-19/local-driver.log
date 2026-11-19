@@ -1,0 +1,65 @@
+=== DriveLink Cast — local verification & build (tree: /home/user/iptv/DriveLink) ===
+PASS source package isolation, extensions, shared group and release signing configuration
+ALL VERIFICATION CHECKS PASSED! (XML/Plist validated: 26)
+PASS  package identities, version 1.4.1 / code 3 and Java 17 target are consistent
+PASS  Gradle DSL scopes checked (buildToolsVersion, defaultConfig)
+PASS  AGP 8 Kotlin DSL patterns checked (signingConfigs/buildTypes/defaultConfig)
+PASS  all XML / plist / entitlements / JSON files parse
+PASS  all referenced app resources exist (manifest, layouts, Kotlin R.*)
+PASS  all internal Kotlin imports resolve to a declared type
+PASS  gradle wrapper, properties and helper scripts present
+PASS  iOS specs: one app target each, versions, Bonjour and App Group consistent
+PASS  BYD-WMP discovery intact (nsd _byd-mirror._tcp., TCP 47810, UDP 47811, beacon 47813, web UI 47812)
+PASS  manifest permissions and flavour separation intact
+PASS  release workflows: signed/unsigned separated, stale+foreign runs refused
+
+ALL SOURCE RELEASE GATES PASSED
+PASS  happy-path: accepted
+PASS  side-branch-run: refused
+      reason: source run was built from branch arena/1b4c9e45-iptv, expected master
+PASS  not-master-tip: refused
+      reason: head_sha 6310e81aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is not the current origin/master tip (a3b2e8cdf9460034cb027632316520a2a244a639); publish a build of the tip
+PASS  not-ancestor: refused
+      reason: head_sha a3b2e8cdf9460034cb027632316520a2a244a639 is not an ancestor of origin/master
+PASS  unsigned-only: refused
+      reason: no signed artifact drivelink-release-a3b2e8cdf9460034cb027632316520a2a244a639 in run 1234567890 (unsigned builds are quarantined and can never be published)
+PASS  expired-signed: refused
+      reason: no signed artifact drivelink-release-a3b2e8cdf9460034cb027632316520a2a244a639 in run 1234567890 (unsigned builds are quarantined and can never be published)
+PASS  stale-run: refused
+      reason: source run is 49 days old (limit 14); rebuild instead of publishing stale artifacts
+PASS  foreign-repo: refused
+      reason: source run does not belong to aldaeny/iptv
+PASS  same-name-wrong-workflow: refused
+PASS  failed-run: refused
+      reason: source run did not succeed
+PASS  bad-run-id: refused
+      reason: run_id must be a numeric run id
+
+publish guard self-test PASSED (11 scenarios)
+CRYPTO, INTEROP, FUZZ, LIVE LOOPBACK TCP/UDP & WEBCODECS SUITE: ALL PASSED!
+PASS  WebSocket opened on same origin — ws://127.0.0.1:47812/ws
+PASS  connection label after open — "متصل"
+PASS  fps badge shows LIVE 60 — LIVE • 60 FPS
+PASS  codec badge H.264 — H.264
+PASS  status line carries phone name — BYD Seal • 
+PASS  touch down/up forwarded to receiver — ["{\"type\":\"touch\",\"x\":0.5,\"y\":0.5,\"action\":0}","{\"type\":\"touch\",\"x\":0.5,\"y\":0.5,\"action\":1}"]
+PASS  failures surfaced when VideoDecoder missing — المتصفح لا يدعم WebCodecs (استخدم Chrome أو Edge)
+PASS  stop releases socket — الاتصال متوقف
+PASS  profile switch updates head-unit spec — Zeekr 15.4" 2.5K Floating Display • TCP 47810 / UDP 47811
+
+ALL SIMULATOR UI WIRING CHECKS PASSED
+=== RUN   TestHandshakeRawX963AndSpki
+--- PASS: TestHandshakeRawX963AndSpki (0.00s)
+=== RUN   TestFrameReassemblerOutOfOrder
+--- PASS: TestFrameReassemblerOutOfOrder (0.00s)
+=== RUN   TestAntiReplayWindowRejectsDuplicatesAndOldPackets
+--- PASS: TestAntiReplayWindowRejectsDuplicatesAndOldPackets (0.00s)
+=== RUN   TestTouchUIRequiresLocalOrigin
+--- PASS: TestTouchUIRequiresLocalOrigin (0.00s)
+PASS
+ok  	byd-simulator	(cached)
+597d5e7a8e6e15883130e5b415b24d569affe043862ddd106f7081084c7264e2  /tmp/drivelink-build-logs/DriveLink-Simulator-Linux
+4a3b42933ced313cd5321d448021f5449460a9472e0f28bf08bc10743a5e63ed  /tmp/drivelink-build-logs/DriveLink-Simulator-Windows.exe
+SKIP: JDK / Gradle / Android SDK not installed in current environment
+SKIP: macOS / Xcode not installed in current environment
+=== done — logs in /tmp/drivelink-build-logs ===

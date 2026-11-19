@@ -22,16 +22,16 @@ class AntiReplayWindow {
         }
 
         if (seq > highestSeq) {
-            val shift = (seq - highestSeq).toInt()
-            bitmap = if (shift >= 64) 1L else ((bitmap shl shift) or 1L)
+            val shift = seq - highestSeq
+            bitmap = if (shift >= 64) 1L else ((bitmap shl shift.toInt()) or 1L)
             highestSeq = seq
             return true
         }
 
-        val delta = (highestSeq - seq).toInt()
+        val delta = highestSeq - seq
         if (delta >= 64) return false // Too old / outside replay window
 
-        val mask = 1L shl delta
+        val mask = 1L shl delta.toInt()
         if ((bitmap and mask) != 0L) return false // Duplicate / replayed packet
         bitmap = bitmap or mask
         return true

@@ -65,6 +65,10 @@ object MirrorSessionCoordinator {
     var onReconfigureEncoder: ((DisplayProfile, DisplayOrientation) -> Unit)? = null
     var onStopServices: (() -> Unit)? = null
 
+    private var peerSupportsHevc = false
+
+    private fun supportedCodec(codec: VideoCodec) = if (peerSupportsHevc) codec else VideoCodec.H264
+
     private var pingJob: Job? = null
     private var reconnectJob: Job? = null
     private var lastConnectedDevice: BydDevice? = null
@@ -89,11 +93,12 @@ object MirrorSessionCoordinator {
 
     fun setPreferredCodec(codec: VideoCodec) {
         _preferredCodec.value = codec
-        val updated = _activeProfile.value.copy(codec = codec)
+        val updated = _activeProfile.value.copy(codec = supportedCodec(codec))
         _activeProfile.value = updated
         if (_connectionState.value is ConnectionState.Streaming) {
             scope.launch {
-                protocolWrapper.startMediaSession(updated)
+                val state = _connectionState.value as? ConnectionState.Streaming ?: return@launch
+                if (runCatching { protocolWrapper.startMediaSession(updated, state.encryptedChannelFingerprint) }.isFailure) return@launch
                 onReconfigureEncoder?.invoke(updated, _orientation.value)
             }
         }
@@ -102,7 +107,7 @@ object MirrorSessionCoordinator {
     fun selectProfileOverride(profile: DisplayProfile?) {
         _profileOverride.value = profile
         if (profile != null) {
-            val withCodec = profile.copy(codec = _preferredCodec.value)
+            val withCodec = profile.copy(codec = supportedCodec(_preferredCodec.value))
             _activeProfile.value = withCodec
             if (_connectionState.value is ConnectionState.Streaming) {
                 onReconfigureEncoder?.invoke(withCodec, _orientation.value)
@@ -116,6 +121,7 @@ object MirrorSessionCoordinator {
         reconnectJob?.cancel()
         lastConnectedDevice = device
 
+        _pendingPairing.value = null
         _connectionState.value = ConnectionState.Handshaking(device)
         val base = _profileOverride.value ?: qualityNegotiator.initialProfileFor(device)
         val negotiated = base.copy(codec = _preferredCodec.value)
@@ -125,17 +131,11 @@ object MirrorSessionCoordinator {
         val result = protocolWrapper.connectAndHandshake(device, negotiated)
         result.fold(
             onSuccess = { handshake ->
-                val store = TrustedVehiclesStore(context)
-                if (store.isTrusted(device.id)) {
-                    activateStreaming(device, negotiated, handshake.fingerprint)
-                } else {
-                    _pendingPairing.value = PairingPrompt(
-                        device = device,
-                        profile = negotiated,
-                        pin = handshake.pairingPin,
-                        fingerprint = handshake.fingerprint
-                    )
-                }
+                // A discovery ID is not a persistent signing key. Reverify every fresh ECDH session.
+                peerSupportsHevc = handshake.supportsHevc
+                val profile = negotiated.copy(codec = supportedCodec(negotiated.codec))
+                _activeProfile.value = profile
+                _pendingPairing.value = PairingPrompt(device, profile, handshake.pairingPin, handshake.fingerprint)
             },
             onFailure = { error ->
                 _connectionState.value = ConnectionState.Error(
@@ -166,7 +166,10 @@ object MirrorSessionCoordinator {
         profile: DisplayProfile,
         fingerprint: String
     ) {
-        protocolWrapper.startMediaSession(profile)
+        runCatching { protocolWrapper.startMediaSession(profile, fingerprint) }.onFailure {
+            _connectionState.value = ConnectionState.Error(it.localizedMessage ?: "Session start failed")
+            return
+        }
         _telemetry.value = _telemetry.value.copy(currentBitrateMbps = profile.bitrateMbps.toFloat())
         _connectionState.value = ConnectionState.Streaming(
             device = device,
@@ -174,6 +177,7 @@ object MirrorSessionCoordinator {
             orientation = _orientation.value,
             encryptedChannelFingerprint = fingerprint
         )
+        onReconfigureEncoder?.invoke(profile, _orientation.value)
         startTelemetryLoops()
     }
 
@@ -190,7 +194,8 @@ object MirrorSessionCoordinator {
         }
         _orientation.value = next
         scope.launch {
-            protocolWrapper.sendOrientationChange(next)
+            if (_connectionState.value !is ConnectionState.Streaming) return@launch
+            if (runCatching { protocolWrapper.sendOrientationChange(next) }.isFailure) return@launch
             onReconfigureEncoder?.invoke(_activeProfile.value, next)
             val state = _connectionState.value
             if (state is ConnectionState.Streaming) {
@@ -208,7 +213,7 @@ object MirrorSessionCoordinator {
             onReconfigureEncoder?.invoke(adapted, _orientation.value)
             if (_connectionState.value is ConnectionState.Streaming) {
                 scope.launch {
-                    protocolWrapper.sendThermalThrottleNotice(adapted.targetFps, adapted.bitrateMbps)
+                    runCatching { protocolWrapper.sendThermalThrottleNotice(adapted.targetFps, adapted.bitrateMbps) }
                 }
             }
         }
@@ -270,8 +275,11 @@ object MirrorSessionCoordinator {
                 val result = protocolWrapper.connectAndHandshake(device, profile)
                 if (result.isSuccess) {
                     val hs = result.getOrThrow()
-                    activateStreaming(device, profile, hs.fingerprint)
-                    onReconfigureEncoder?.invoke(profile, _orientation.value)
+                    _connectionState.value = ConnectionState.KeyExchange(device)
+                    peerSupportsHevc = hs.supportsHevc
+                    val selected = profile.copy(codec = supportedCodec(profile.codec))
+                    _activeProfile.value = selected
+                    _pendingPairing.value = PairingPrompt(device, selected, hs.pairingPin, hs.fingerprint)
                     return@launch
                 }
             }

@@ -67,6 +67,7 @@ class AudioCaptureEncoder(
                 .build()
         }
 
+        audioRecord = record
         check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialize" }
 
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
@@ -75,14 +76,14 @@ class AudioCaptureEncoder(
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16_384)
         }
 
-        val aacCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC).apply {
+        val aacCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        codec = aacCodec
+        aacCodec.apply {
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             start()
         }
 
         record.startRecording()
-        audioRecord = record
-        codec = aacCodec
 
         captureJob = scope.launch(Dispatchers.Default) {
             val pcmBuf = ByteArray(4096)
@@ -92,7 +93,7 @@ class AudioCaptureEncoder(
                 if (read > 0) {
                     val inIdx = runCatching { aacCodec.dequeueInputBuffer(5_000L) }.getOrDefault(-1)
                     if (inIdx >= 0) {
-                        val inBuffer = aacCodec.getInputBuffer(inIdx)
+                        val inBuffer = runCatching { aacCodec.getInputBuffer(inIdx) }.getOrNull()
                         inBuffer?.clear()
                         inBuffer?.put(pcmBuf, 0, read)
                         val ptsUs = System.nanoTime() / 1_000L
@@ -102,7 +103,7 @@ class AudioCaptureEncoder(
 
                 var outIdx = runCatching { aacCodec.dequeueOutputBuffer(bufferInfo, 0) }.getOrDefault(-1)
                 while (outIdx >= 0) {
-                    val outBuffer = aacCodec.getOutputBuffer(outIdx)
+                    val outBuffer = runCatching { aacCodec.getOutputBuffer(outIdx) }.getOrNull()
                     if (outBuffer != null && bufferInfo.size > 0 &&
                         (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
                     ) {

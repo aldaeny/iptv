@@ -4,6 +4,13 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application>
+        <!-- Lint analyzes this flavor manifest as well as main. Keep the projection
+             service contract explicit here; the manifest merger keys it by class. -->
+        <service
+            android:name="app.drivelink.cast.service.MirrorForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <service
             android:name="app.drivelink.cast.service.MirrorOverlayService"
             android:exported="false" />

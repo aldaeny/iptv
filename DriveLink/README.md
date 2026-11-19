@@ -55,7 +55,7 @@ cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
 - **iOS:** يلزم macOS + Xcode + XcodeGen: `cd DriveLink/ios && xcodegen generate --spec Project.yml`
   ثم `xcodebuild -scheme BydWirelessMirror -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`.
   راجع [دليل البناء](docs/BUILD_GUIDE.md) و[دليل iOS](docs/IOS_GUIDE.md).
-- **المحاكي:** `cd DriveLink/simulator && go run .` ثم افتح `http://127.0.0.1:47812` على نفس الجهاز.
+- **المحاكي:** `cd DriveLink/simulator && go run .` ثم افتح `http://127.0.0.1:47812` على نفس الجهاز. واجهة الويب والتحكم باللمس محليان؛ لا تُفتح قواعد جدار حماية Windows تلقائياً. عند موافقة مسؤول الجهاز يمكنه ضبط القواعد أو تفعيل الإعداد الاختياري `DRIVELINK_CONFIGURE_FIREWALL=1`.
 - **CI:** `.github/workflows/drivelink-android-release.yml` — مهمة `verify` تعمل عند كل PR/دفعة تخص
   `DriveLink/**`، ومهمة `android` (بناء وتوقيع والتحقق من APK) تُشغَّل يدوياً عبر `workflow_dispatch`.
 

@@ -6,7 +6,7 @@ python3 DriveLink/tests/verify_protocol.py
 ```
 
 ## 2. Android Phone Sender (`DriveLink/android/`)
-- **Requirements:** JDK 17, Android SDK (`compileSdk 34`, `minSdk 26`), Gradle 8.10.2.
+- **Requirements:** JDK 17, Android SDK (`compileSdk 35`, `minSdk 26`), Gradle 8.10.2.
 - **Flavors:**
   - `standard` (`app.drivelink.cast`): Play-Protect-reduced APK without `SYSTEM_ALERT_WINDOW` or `BIND_ACCESSIBILITY_SERVICE`.
   - `fullTouch` (`app.drivelink.cast.touch`): Includes floating overlay + Accessibility reverse-touch service.
@@ -17,14 +17,14 @@ cd DriveLink/android
 ```
 
 ## 3. BYD DiLink Receiver (`DriveLink/receiver-dilink/`)
-- **Requirements:** JDK 17, Android SDK 34.
+- **Requirements:** JDK 17, Android SDK 35, Build Tools 35.0.0.
 ```bash
 cd DriveLink/receiver-dilink
 ./gradlew testDebugUnitTest assembleRelease
 ```
 
 ## 4. iOS Sender (`DriveLink/ios/`)
-- **Requirements:** macOS with Xcode 15+, Swift 5.9+, XcodeGen (`brew install xcodegen`).
+- **Requirements:** macOS with Xcode 15.3+, Swift 5.10+, XcodeGen (`brew install xcodegen`).
 - **SwiftPM Unit Tests:**
 ```bash
 cd DriveLink/ios
@@ -39,7 +39,7 @@ xcodebuild -project BydWirelessMirrorFree.xcodeproj -scheme BydWirelessMirror -c
 - **Full 3-Target IPA (System-Wide `BroadcastExtension` + `WidgetExtension`):**
 ```bash
 cd DriveLink/ios
-xcodegen generate
+xcodegen generate --spec Project.yml
 xcodebuild -project BydWirelessMirror.xcodeproj -scheme BydWirelessMirror -configuration Release -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
 ```
 

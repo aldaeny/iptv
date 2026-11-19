@@ -1,0 +1,11 @@
+PASS  WebSocket opened on same origin — ws://127.0.0.1:47812/ws
+PASS  connection label after open — "متصل"
+PASS  fps badge shows LIVE 60 — LIVE • 60 FPS
+PASS  codec badge H.264 — H.264
+PASS  status line carries phone name — BYD Seal • 
+PASS  touch down/up forwarded to receiver — ["{\"type\":\"touch\",\"x\":0.5,\"y\":0.5,\"action\":0}","{\"type\":\"touch\",\"x\":0.5,\"y\":0.5,\"action\":1}"]
+PASS  failures surfaced when VideoDecoder missing — المتصفح لا يدعم WebCodecs (استخدم Chrome أو Edge)
+PASS  stop releases socket — الاتصال متوقف
+PASS  profile switch updates head-unit spec — Zeekr 15.4" 2.5K Floating Display • TCP 47810 / UDP 47811
+
+ALL SIMULATOR UI WIRING CHECKS PASSED

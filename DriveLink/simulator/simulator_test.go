@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"fmt"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -131,5 +132,17 @@ func TestAntiReplayWindowRejectsDuplicatesAndOldPackets(t *testing.T) {
 	}
 	if w.Accept(10) {
 		t.Fatal("packet older than 64-packet window must be rejected")
+	}
+}
+
+func TestTouchUIRequiresLocalOrigin(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://127.0.0.1:47812/ws", nil)
+	req.Header.Set("Origin", "http://"+req.Host)
+	if !localBrowser(req) {
+		t.Fatal("local page rejected")
+	}
+	req.Header.Set("Origin", "http://other.invalid")
+	if localBrowser(req) {
+		t.Fatal("unrelated page accepted")
 	}
 }

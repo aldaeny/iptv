@@ -1,0 +1,22 @@
+PASS  happy-path: accepted
+PASS  side-branch-run: refused
+      reason: source run was built from branch arena/1b4c9e45-iptv, expected master
+PASS  not-master-tip: refused
+      reason: head_sha 6310e81aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is not the current origin/master tip (a3b2e8cdf9460034cb027632316520a2a244a639); publish a build of the tip
+PASS  not-ancestor: refused
+      reason: head_sha a3b2e8cdf9460034cb027632316520a2a244a639 is not an ancestor of origin/master
+PASS  unsigned-only: refused
+      reason: no signed artifact drivelink-release-a3b2e8cdf9460034cb027632316520a2a244a639 in run 1234567890 (unsigned builds are quarantined and can never be published)
+PASS  expired-signed: refused
+      reason: no signed artifact drivelink-release-a3b2e8cdf9460034cb027632316520a2a244a639 in run 1234567890 (unsigned builds are quarantined and can never be published)
+PASS  stale-run: refused
+      reason: source run is 49 days old (limit 14); rebuild instead of publishing stale artifacts
+PASS  foreign-repo: refused
+      reason: source run does not belong to aldaeny/iptv
+PASS  same-name-wrong-workflow: refused
+PASS  failed-run: refused
+      reason: source run did not succeed
+PASS  bad-run-id: refused
+      reason: run_id must be a numeric run id
+
+publish guard self-test PASSED (11 scenarios)

@@ -3,6 +3,20 @@ import XCTest
 
 final class BydMirrorCoreTests: XCTestCase {
 
+    func testInvalidSavedPortsFallBackAndNewSessionClearsConfirmation() throws {
+        let suite = "DriveLink.test." + UUID().uuidString
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let store = SharedSessionStore(defaults: prefs)
+        prefs.set(70_000, forKey: "byd.target.controlPort")
+        prefs.set(-1, forKey: "byd.target.mediaPort")
+        XCTAssertEqual(store.loadTargetEndpoint().controlPort, 47810)
+        XCTAssertEqual(store.loadTargetEndpoint().mediaPort, 47811)
+        store.confirmPairingAndNotify(deviceId: "test", fingerprint: "prior")
+        store.savePairingVerification(pin: "123456", fingerprint: "current")
+        XCTAssertNil(store.confirmedFingerprint)
+    }
+
     func testKeyExchangeAndEncryptedRoundTrip() throws {
         let phoneWrapper = BydProtocolWrapper(crypto: ChannelCryptoManager())
         let bydCrypto = ChannelCryptoManager()
