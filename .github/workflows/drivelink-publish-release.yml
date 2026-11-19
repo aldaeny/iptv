@@ -8,6 +8,17 @@ name: DriveLink Publish Release
 #     minSdk 26, non-debuggable), and
 #   * the release APKs carry the trusted signer (± DRIVELINK_SIGNER_SHA256), and
 #   * SHA256SUMS.txt matches the uploaded files.
+#
+# Hardened preconditions (all fail closed):
+#   * run_id is numeric, belongs to this repository, is a workflow_dispatch run of
+#     "DriveLink CI & Android Release Build", concluded success, and is at most
+#     MAX_RUN_AGE_DAYS old;
+#   * its head_sha is an ancestor of origin/master AND the current origin/master
+#     tip, built from the master branch;
+#   * the artifact drivelink-release-<head_sha> exists and is not expired. Builds
+#     without a keystore are uploaded as drivelink-unsigned-<head_sha> and this
+#     workflow never downloads that namespace, so unsigned output cannot publish;
+#   * the source release gate is re-run on the exact commit being published.
 
 on:
   workflow_dispatch:
@@ -30,6 +41,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # A release run older than this is considered stale and cannot be published.
+  MAX_RUN_AGE_DAYS: "14"
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -38,20 +53,67 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate source run
+      - name: Validate source run (repo, branch, commit, freshness, signed)
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run_id }}
         run: |
           set -euo pipefail
+          # run_id must be numeric: blocks path traversal / expression injection.
+          [[ $RUN_ID =~ ^[0-9]{6,20}$ ]] || { echo "run_id must be a numeric run id" >&2; exit 1; }
+
           info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
-          echo "$info" | jq -e '.conclusion == "success"' >/dev/null
-          echo "$info" | jq -e '.head_sha != null' >/dev/null
-          workflow=$(echo "$info" | jq -r .name)
-          [[ $workflow == "DriveLink CI & Android Release Build" ]]
-          head_sha=$(echo "$info" | jq -r .head_sha)
-          echo "Source run $RUN_ID succeeded for $head_sha"
+          echo "$info" > /tmp/run.json
+
+          # Same repository, same workflow, and a successful conclusion.
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.repository.full_name == $repo' /tmp/run.json >/dev/null \
+            || { echo "source run does not belong to $GITHUB_REPOSITORY" >&2; exit 1; }
+          jq -e '.conclusion == "success"' /tmp/run.json >/dev/null \
+            || { echo "source run did not succeed" >&2; exit 1; }
+          jq -e '.event == "workflow_dispatch"' /tmp/run.json >/dev/null \
+            || { echo "source run must be a workflow_dispatch build, not $(
+                 jq -r .event /tmp/run.json)" >&2; exit 1; }
+          if [[ $(jq -r .name /tmp/run.json) != "DriveLink CI & Android Release Build" ]]; then
+            echo "source run is not the DriveLink release build" >&2; exit 1
+          fi
+
+          head_sha=$(jq -r '.head_sha // ""' /tmp/run.json)
+          [[ $head_sha =~ ^[0-9a-f]{40}$ ]] || { echo "source run has no valid head_sha" >&2; exit 1; }
+
+          # Freshness: refuse stale runs.
+          max_age=$(( MAX_RUN_AGE_DAYS * 86400 ))
+          created=$(jq -r .created_at /tmp/run.json)
+          created_epoch=$(date -u -d "$created" +%s)
+          age=$(( $(date -u +%s) - created_epoch ))
+          [[ $age -le $max_age ]] || { echo "source run is $(( age / 86400 )) days old (limit ${MAX_RUN_AGE_DAYS}); rebuild instead of publishing stale artifacts" >&2; exit 1; }
+
+          # Commit must be on master, and only the current master tip is publishable.
+          git fetch --no-tags --depth=1 origin master
+          git merge-base --is-ancestor "$head_sha" origin/master \
+            || { echo "head_sha $head_sha is not an ancestor of origin/master" >&2; exit 1; }
+          [[ $(git rev-parse origin/master) == "$head_sha" ]] \
+            || { echo "head_sha $head_sha is not the current origin/master tip ($(git rev-parse origin/master)); publish a build of the tip" >&2; exit 1; }
+
+          # The run must have been dispatched on master (not on a side branch).
+          [[ $(jq -r .head_branch /tmp/run.json) == "master" ]] \
+            || { echo "source run was built from branch $(jq -r .head_branch /tmp/run.json), expected master" >&2; exit 1; }
+
+          # The signed artifact must exist for this commit.
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate)
+          echo "$artifacts" | jq -e --arg n "drivelink-release-$head_sha" \
+            'any(.artifacts[]?; .name == $n and .expired == false)' >/dev/null \
+            || { echo "no signed artifact drivelink-release-$head_sha in run $RUN_ID (unsigned builds are quarantined and can never be published)" >&2; exit 1; }
+
+          echo "Source run $RUN_ID OK: $head_sha (master tip, $(( age / 3600 ))h old, signed artifact present)"
           echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      - name: Re-check release gate on the exact published commit
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+          [[ $(git rev-parse HEAD) == "$HEAD_SHA" ]]
+          python3 -m pip install --disable-pip-version-check pyyaml
+          python3 DriveLink/tests/verify_release.py
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
@@ -68,8 +130,11 @@ jobs:
           RUN_ID: ${{ inputs.run_id }}
         run: |
           set -euo pipefail
+          # Only the signed artifact namespace is ever downloaded.
+          name="drivelink-release-$HEAD_SHA"
+          [[ $name =~ ^drivelink-release-[0-9a-f]{40}$ ]] || { echo "bad artifact name $name" >&2; exit 1; }
           mkdir -p dist
-          gh run download "$RUN_ID" -n "drivelink-release-$HEAD_SHA" -D dist
+          gh run download "$RUN_ID" -n "$name" -D dist
           ls -l dist
       - name: Re-verify every APK and checksum before publishing
         run: |
