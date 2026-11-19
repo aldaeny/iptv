@@ -13,14 +13,14 @@ on:
   pull_request:
     paths:
       - "DriveLink/**"
-      - ".github/workflows/drivelink-android-release.yml"
+      - ".github/workflows/drivelink-*.yml"
   push:
     branches:
       - "master"
       - "arena/**"
     paths:
       - "DriveLink/**"
-      - ".github/workflows/drivelink-android-release.yml"
+      - ".github/workflows/drivelink-*.yml"
 
 permissions:
   contents: read
@@ -94,7 +94,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-      - uses: gradle/actions/setup-gradle@7296c772c13d12d9871528814b51fb2143c138ef # v6.4.1
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Install Android SDK packages
@@ -132,7 +132,7 @@ jobs:
             echo "DRIVELINK_KEY_PASSWORD=$KEY_PASS"
             echo "DRIVELINK_RELEASE_SIGNABLE=true"
           } >> "$GITHUB_ENV"
-          echo "mode=signed" >> "$GITHUB_OUTPUT"
+          echo "mode=release" >> "$GITHUB_OUTPUT"
           echo "Release keystore configured from repository secrets."
       - name: Re-run source release gate against the exact build commit
         run: |
@@ -168,6 +168,20 @@ jobs:
           else
             bash DriveLink/tools/verify-android-build.sh unsigned DriveLink "$RUNNER_TEMP/drivelink-release"
           fi
+      - name: Smoke test verified release APKs on an API 35 emulator
+        if: steps.signmode.outputs.mode == 'release'
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image='system-images;android-35;google_apis;x86_64'
+          "$tools/sdkmanager" emulator "$image"
+          echo no | "$tools/avdmanager" create avd -n drivelink-test -k "$image"
+          "$ANDROID_HOME/emulator/emulator" -avd drivelink-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          trap 'adb emu kill || true' EXIT
+          timeout 600 bash -c 'adb wait-for-device; until [[ $(adb shell getprop sys.boot_completed | tr -d "\r") == 1 ]]; do sleep 2; done'
+          bash DriveLink/tools/smoke-android.sh "$RUNNER_TEMP/drivelink-release" | tee "$RUNNER_TEMP/drivelink-release/DEVICE_TEST.txt"
       - name: Build debug APKs (installable smoke-test artifacts)
         run: |
           set -o pipefail
@@ -205,6 +219,7 @@ jobs:
             ${{ runner.temp }}/drivelink-release/DriveLink-Receiver.apk
             ${{ runner.temp }}/drivelink-release/SHA256SUMS.txt
             ${{ runner.temp }}/drivelink-release/SIGNING_REPORT.md
+            ${{ runner.temp }}/drivelink-release/DEVICE_TEST.txt
           if-no-files-found: error
           retention-days: 90
       - name: Upload debug artifacts

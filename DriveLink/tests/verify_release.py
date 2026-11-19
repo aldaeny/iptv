@@ -221,6 +221,9 @@ def check_wrapper() -> None:
                 fail(f"missing {needed.relative_to(ROOT)}")
         if gradlew.exists() and not (gradlew.stat().st_mode & 0o111):
             fail(f"{gradlew.relative_to(ROOT)} is not executable")
+        for launcher in (gradlew, base / "gradlew.bat"):
+            if "org.gradle.wrapper.GradleWrapperMain" not in launcher.read_text():
+                fail(f"{launcher}: must invoke the wrapper entry point")
         if props.exists():
             text = props.read_text()
             if "gradle-8.10.2-bin.zip" not in text:
@@ -346,7 +349,7 @@ def check_release_workflows() -> None:
     # Signed builds and keystore-less builds must not share an artifact name.
     if "id: signmode" not in build:
         fail("release build workflow lost the signmode step id (artifact naming)")
-    for token in ('echo "mode=signed" >> "$GITHUB_OUTPUT"',
+    for token in ('echo "mode=release" >> "$GITHUB_OUTPUT"',
                   'echo "mode=unsigned" >> "$GITHUB_OUTPUT"'):
         if token not in build:
             fail(f"release build workflow does not report signing mode: {token}")

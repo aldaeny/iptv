@@ -40,6 +40,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   # A release run older than this is considered stale and cannot be published.
@@ -47,6 +48,7 @@ env:
 
 jobs:
   publish:
+    if: github.ref == 'refs/heads/master' && inputs.tag == 'v1.4.1'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -88,7 +90,7 @@ jobs:
           [[ $age -le $max_age ]] || { echo "source run is $(( age / 86400 )) days old (limit ${MAX_RUN_AGE_DAYS}); rebuild instead of publishing stale artifacts" >&2; exit 1; }
 
           # Commit must be on master, and only the current master tip is publishable.
-          git fetch --no-tags --depth=1 origin master
+          git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
           git merge-base --is-ancestor "$head_sha" origin/master \
             || { echo "head_sha $head_sha is not an ancestor of origin/master" >&2; exit 1; }
           [[ $(git rev-parse origin/master) == "$head_sha" ]] \
@@ -137,6 +139,8 @@ jobs:
           gh run download "$RUN_ID" -n "$name" -D dist
           ls -l dist
       - name: Re-verify every APK and checksum before publishing
+        env:
+          DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -144,7 +148,10 @@ jobs:
           mapfile -t files < <(ls *.apk)
           [[ ${#files[@]} -eq 3 ]]
           python3 - <<'PY'
-          import hashlib, subprocess, sys
+          import hashlib, os, re, subprocess, sys
+          trusted = os.environ["DRIVELINK_SIGNER_SHA256"].replace(":", "").lower()
+          if not re.fullmatch(r"[0-9a-f]{64}", trusted):
+              sys.exit("trusted signer SHA-256 is required")
           expected = {
               "DriveLink-Standard.apk": ("app.drivelink.cast", "3", "1.4.1"),
               "DriveLink-FullTouch.apk": ("app.drivelink.cast.touch", "3", "1.4.1"),
@@ -167,24 +174,33 @@ jobs:
               out = subprocess.run(["apksigner", "verify", "--verbose", "--print-certs", apk], capture_output=True, text=True)
               if out.returncode != 0:
                   sys.exit(f"{apk}: signature verification failed\n{out.stdout}\n{out.stderr}")
+              signers = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([a-f0-9]+)$", out.stdout.lower(), re.M | re.I)
+              if signers != [trusted]:
+                  sys.exit(f"{apk}: untrusted signer")
               if "Android Debug" in out.stdout:
                   sys.exit(f"{apk}: signed with the Android debug key")
               print(f"OK {apk}: {pid} {name} ({code})")
           PY
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@28ab305d0ffa26d60ec4bd614126329e26c7a0ec # v3.0.4
-        with:
-          tag_name: ${{ inputs.tag }}
-          name: "DriveLink ${{ inputs.tag }}"
-          prerelease: ${{ inputs.prerelease }}
-          fail_on_unmatched_files: true
-          body_path: DriveLink/releases/v1.4.1/RELEASE_NOTES.md
-          files: |
-            dist/DriveLink-Standard.apk
-            dist/DriveLink-FullTouch.apk
-            dist/DriveLink-Receiver.apk
-            dist/SHA256SUMS.txt
-            dist/SIGNING_REPORT.md
+      - name: Stage, download-check and publish the verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag=v1.4.1
+          # Never overwrite an existing tag or release. A failed draft stays private for review.
+          [[ -z $(git ls-remote --tags origin "refs/tags/$tag") ]]
+          [[ $(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha) == "$HEAD_SHA" ]]
+          assets=(dist/DriveLink-{Standard,FullTouch,Receiver}.apk dist/{SIGNING_REPORT.md,SHA256SUMS.txt,DEVICE_TEST.txt})
+          for f in "${assets[@]}"; do test -s "$f"; done
+          flags=(); [[ $PRERELEASE != true ]] || flags+=(--prerelease)
+          gh release create "$tag" --draft "${flags[@]}" --target "$HEAD_SHA" --title 'DriveLink v1.4.1' \
+            --notes-file DriveLink/docs/ANDROID_RELEASE_NOTES.md "${assets[@]}"
+          gh release download "$tag" -D "$RUNNER_TEMP/staged"
+          for f in "${assets[@]}"; do cmp "$f" "$RUNNER_TEMP/staged/${f##*/}"; done
+          gh release edit "$tag" --draft=false
+          gh release download "$tag" -D "$RUNNER_TEMP/published"
+          for f in "${assets[@]}"; do cmp "$f" "$RUNNER_TEMP/published/${f##*/}"; done
       - name: Upload published artifact manifest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
