@@ -90,6 +90,28 @@ def check_gradle_dsl_scopes() -> None:
     ok("Gradle DSL scopes checked (buildToolsVersion, defaultConfig)")
 
 
+# --------------------------------------------------------------------------- 2b
+AGP8_ANTIPATTERNS = [
+    # (regex, message)  -- these compile in isolation but fail inside AGP's Kotlin DSL
+    (r"signingConfigs\s*\{[^}]*getByName\(", "signingConfigs has no getByName(); use named(...)"),
+    (r"defaultConfig\s*\{[^}]*buildToolsVersion", "buildToolsVersion is an android { } property"),
+]
+
+
+def check_agp_kotlin_dsl() -> None:
+    for project in ("android", "receiver-dilink"):
+        text = (ROOT / project / "app/build.gradle.kts").read_text()
+        for pattern, message in AGP8_ANTIPATTERNS:
+            if re.search(pattern, text, re.S):
+                fail(f"{project}: {message}")
+        # signing config must be created from env exactly once and never fall back to debug
+        if text.count('create("release")') > 1:
+            fail(f"{project}: duplicate release signing config")
+        if 'signingConfigs.getByName("debug")' in text:
+            fail(f"{project}: release must not reuse the debug signing config")
+    ok("AGP 8 Kotlin DSL patterns checked (signingConfigs/buildTypes/defaultConfig)")
+
+
 # --------------------------------------------------------------------------- 3
 def check_parsing() -> None:
     for pattern, label in (
@@ -319,6 +341,7 @@ def check_android_manifest() -> None:
 def main() -> int:
     check_identities()
     check_gradle_dsl_scopes()
+    check_agp_kotlin_dsl()
     check_parsing()
     check_resources()
     check_kotlin_imports()
