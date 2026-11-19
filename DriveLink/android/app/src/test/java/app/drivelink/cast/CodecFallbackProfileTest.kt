@@ -2,6 +2,8 @@ package app.drivelink.cast
 
 import app.drivelink.cast.core.model.BydDevice
 import app.drivelink.cast.core.model.ConnectionState
+import app.drivelink.cast.core.model.DisplayProfile
+import app.drivelink.cast.core.model.ThermalLevel
 import app.drivelink.cast.core.model.VideoCodec
 import app.drivelink.cast.core.session.MirrorSessionCoordinator
 import kotlinx.coroutines.Dispatchers
@@ -75,5 +77,38 @@ class CodecFallbackProfileTest {
         } finally {
             MirrorSessionCoordinator.onReconfigureEncoder = null
         }
+    }
+
+    @Test
+    fun `changes only the codec and keeps the rest of the profile`() {
+        val before = MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H265)
+            ?: MirrorSessionCoordinator.activeProfile.value
+
+        val after = MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H264)
+
+        assertNotNull(after)
+        // Resolution, frame rate, bitrate and identity must survive the fallback untouched: only the
+        // codec changed on the hardware.
+        assertEquals(before.copy(codec = VideoCodec.H264), after)
+    }
+
+    @Test
+    fun `a reconfigure after the fallback asks for the codec that is running`() {
+        MirrorSessionCoordinator.selectProfileOverride(DisplayProfile.DILINK_15_6_FHD)
+        MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H265)
+        var askedCodec: VideoCodec? = null
+        MirrorSessionCoordinator.onReconfigureEncoder = { profile, _ -> askedCodec = profile.codec }
+
+        try {
+            // H265 -> AVC is what the hardware reported; a later thermal reconfigure must not go
+            // back to asking for H265 (that re-triggered the fallback on every reconfigure).
+            MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H264)
+            MirrorSessionCoordinator.updateThermalLevel(ThermalLevel.CRITICAL)
+        } finally {
+            MirrorSessionCoordinator.onReconfigureEncoder = null
+            MirrorSessionCoordinator.selectProfileOverride(null)
+        }
+
+        assertEquals(VideoCodec.H264, askedCodec)
     }
 }

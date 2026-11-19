@@ -73,7 +73,14 @@ class ScreenCaptureEncoder(
             }
             val created = runCatching {
                 MediaCodec.createEncoderByType(candidateMime).apply {
-                    configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    // A candidate that refuses the format must be released here: otherwise a failed
+                    // fallback attempt keeps a native encoder allocated for the rest of the session.
+                    try {
+                        configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    } catch (error: Throwable) {
+                        runCatching { release() }
+                        throw error
+                    }
                 }
             }.getOrNull()
             if (created != null) {
@@ -86,8 +93,19 @@ class ScreenCaptureEncoder(
             onProjectionStopped()
             "No hardware video encoder available"
         }
-        val surface = encoder.createInputSurface()
-        encoder.start()
+        val surface = try {
+            encoder.createInputSurface()
+        } catch (error: Throwable) {
+            runCatching { encoder.release() }
+            throw error
+        }
+        try {
+            encoder.start()
+        } catch (error: Throwable) {
+            runCatching { surface.release() }
+            runCatching { encoder.release() }
+            throw error
+        }
         // Announced only once the encoder is actually running, so a codec that fails to start
         // can never move the session profile away from the codec that is really in use.
         if (selectedMime != requestedMime) {
