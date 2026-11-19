@@ -1,4 +1,4 @@
-# دليل البناء والتشغيل والتثبيت — BYD Wireless Mirror
+# دليل البناء والتثبيت والتشغيل — DriveLink Cast
 
 ## 1. المتطلبات الأساسية لبيئة المطورين
 - **Android / BYD DiLink:** Android Studio (Ladybug أو أحدث)، JDK 17، و Android SDK 35.
@@ -10,7 +10,7 @@
 
 ### أ) توليد Gradle Wrapper والبناء
 ```bash
-cd byd-mirror/android
+cd DriveLink/android
 gradle wrapper --gradle-version 8.10.2
 ./gradlew assembleDebug testDebugUnitTest
 
@@ -24,20 +24,20 @@ gradle wrapper --gradle-version 8.10.2
 2. أو عبر ADB:
 ```bash
 adb connect <BYD_IP>:5555
-adb install -r byd-mirror/receiver-dilink/app/build/outputs/apk/debug/app-debug.apk
+adb install -r DriveLink/receiver-dilink/app/build/outputs/apk/debug/app-debug.apk
 ```
 3. **ملاحظة في حال كانت شاشة السيارة مقفلة ضد تثبيت APK:**
    - يدعم تطبيق الهاتف تلقائياً محول **`MiracastDisplayAdapter`** (`MediaRouter` / Wi-Fi Display) للربط المباشر مع شاشات BYD التي تدعم العرض اللاسلكي المدمج (WFD/Miracast) دون تثبيت المستقبل.
 
 ### ج) تفعيل التحكم العكسي باللمس ونافذة Overlay على الهاتف
 - **لوحة التحكم العائمة:** امنح التطبيق إذن `الظهور فوق التطبيقات الأخرى` (`SYSTEM_ALERT_WINDOW`).
-- **التحكم باللمس من شاشة السيارة:** من `الإعدادات ← تسهيل الاستخدام (Accessibility)`، فعّل خدمة **BYD Wireless Mirror Touch**.
+- **التحكم باللمس من شاشة السيارة:** من `الإعدادات ← تسهيل الاستخدام (Accessibility)`، فعّل خدمة **DriveLink Cast Touch**.
 
 ---
 
 ## 3. بناء تطبيق الآيفون (iOS)
 ```bash
-cd byd-mirror/ios
+cd DriveLink/ios
 xcodegen generate
 open BydWirelessMirror.xcodeproj
 ```

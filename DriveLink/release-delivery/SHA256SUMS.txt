@@ -1,0 +1,6 @@
+# SHA256SUMS.txt — BYD Wireless Mirror (arena/b9db39ae-iptv)
+# Status: NO RELEASE ARTIFACTS BUILT IN THIS ENVIRONMENT
+# Reason: Local sandbox lacks JDK 17 / Android SDK / Go 1.22 / Xcode, and GitHub Actions
+#         returned HTTP 422 ("Actions has been disabled for this repository") on aldaeny/iptv.
+# Once built via GitHub Actions or a local SDK machine, populate actual SHA-256 checksums:
+#   sha256sum app-standard-release.apk app-fullTouch-release.apk app-release.apk

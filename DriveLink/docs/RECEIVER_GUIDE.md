@@ -1,4 +1,4 @@
-# RECEIVER GUIDE — BYD DiLink Head-Unit Receiver (`byd-mirror/receiver-dilink`)
+# RECEIVER GUIDE — BYD DiLink Head-Unit Receiver (`DriveLink/receiver-dilink`)
 
 ## 1. Purpose
 Runs directly on BYD DiLink (`3.0 / 4.0 / 5.0`) Android infotainment screens or external Android AI/HDMI boxes (`Track A` / `Track C`).

@@ -1,4 +1,4 @@
-# المعمارية التقنية وخارطة التنفيذ — BYD Wireless Mirroring
+# المعمارية التقنية وخارطة التنفيذ — DriveLink Cast
 
 ## 1. نظرة عامة على المعمارية (Layered Architecture)
 

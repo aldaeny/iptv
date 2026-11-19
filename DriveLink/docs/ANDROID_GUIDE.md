@@ -1,4 +1,4 @@
-# ANDROID GUIDE — BYD Wireless Mirror Sender
+# ANDROID GUIDE — DriveLink Cast Sender
 
 ## 1. Architecture & Flavors
 - **`standard` (`BydMirror-Phone.apk`):** Ideal for Android 14+ devices where Google Play Protect Enhanced Fraud Protection flags sideloaded apps that declare `BIND_ACCESSIBILITY_SERVICE` or `SYSTEM_ALERT_WINDOW`.

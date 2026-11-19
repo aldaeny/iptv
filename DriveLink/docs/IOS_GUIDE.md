@@ -1,4 +1,4 @@
-# IOS GUIDE — BYD Wireless Mirror Sender
+# IOS GUIDE — DriveLink Cast Sender
 
 ## 1. Two Build Variants (Honest iOS Constraints)
 | Variant | Spec | Apple ID Cost | Capture Scope |
