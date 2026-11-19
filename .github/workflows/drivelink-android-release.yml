@@ -74,6 +74,7 @@ jobs:
       - name: Package identity, protocol parity and crypto suite
         run: |
           set -o pipefail
+          python3 DriveLink/tests/test_ios_signing.py
           python3 DriveLink/tests/verify_isolation.py
           python3 DriveLink/tests/verify_protocol.py
           python3 DriveLink/tests/verify_release.py
@@ -146,8 +147,8 @@ jobs:
             key=${entry%:*}; name=${entry#*:}
             if [[ -n ${!key} ]]; then echo "::notice::$name present"; else echo "::notice::BLOCKED $name unavailable"; fi
           done
-          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
-            echo "::warning::No DRIVELINK_KEYSTORE_* secrets; release APKs will be built UNSIGNED and are not publishable."
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ] || [ -z "$PIN" ]; then
+            echo "::warning::Incomplete signing inputs; diagnostic release APKs will be UNSIGNED and are not publishable."
             echo "DRIVELINK_RELEASE_SIGNABLE=false" >> "$GITHUB_ENV"
             # Unsigned output must never land in the publishable artifact name.
             echo "mode=unsigned" >> "$GITHUB_OUTPUT"
@@ -157,6 +158,10 @@ jobs:
           KEYSTORE_FILE="$RUNNER_TEMP/drivelink-release.jks"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
           test -s "$KEYSTORE_FILE"
+          pin=${PIN//:/}; pin=${pin,,}
+          [[ $pin =~ ^[0-9a-f]{64}$ ]] || { echo '::error::Invalid trusted Android signer fingerprint'; exit 1; }
+          cert=$(keytool -exportcert -keystore "$KEYSTORE_FILE" -storepass:env KEYSTORE_PASS -alias "$KEY_ALIAS" 2>/dev/null | sha256sum | cut -d' ' -f1) || { echo '::error::Cannot open configured keystore and alias'; exit 1; }
+          [[ $cert == "$pin" ]] || { echo '::error::Configured key is not the approved release identity'; exit 1; }
           {
             echo "DRIVELINK_KEYSTORE_PATH=$KEYSTORE_FILE"
             echo "DRIVELINK_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
@@ -299,6 +304,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Require an approved signer for release eligibility
+        if: github.event_name == 'workflow_dispatch' && steps.signmode.outputs.mode == 'unsigned'
+        run: |
+          echo '::error::BLOCKED Android distribution signing. Unsigned and debug artifacts are diagnostic only.'
+          exit 1
+
   ios:
     if: github.event_name == 'workflow_dispatch'
     needs: verify
@@ -383,6 +394,25 @@ jobs:
             ${{ runner.temp }}/drivelink-ios/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+      - name: Sign, export and verify both iOS distribution IPAs
+        env:
+          DRIVELINK_APPLE_TEAM_ID: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
+          DRIVELINK_IOS_SIGNER_SHA256: ${{ vars.DRIVELINK_IOS_SIGNER_SHA256 }}
+          DRIVELINK_IOS_EXPORT_METHOD: ${{ vars.DRIVELINK_IOS_EXPORT_METHOD }}
+          DRIVELINK_IOS_P12_BASE64: ${{ secrets.DRIVELINK_IOS_P12_BASE64 }}
+          DRIVELINK_IOS_P12_PASSWORD: ${{ secrets.DRIVELINK_IOS_P12_PASSWORD }}
+          DRIVELINK_IOS_PROFILE_FULL: ${{ secrets.DRIVELINK_IOS_PROFILE_FULL }}
+          DRIVELINK_IOS_PROFILE_BROADCAST: ${{ secrets.DRIVELINK_IOS_PROFILE_BROADCAST }}
+          DRIVELINK_IOS_PROFILE_WIDGET: ${{ secrets.DRIVELINK_IOS_PROFILE_WIDGET }}
+          DRIVELINK_IOS_PROFILE_FREE: ${{ secrets.DRIVELINK_IOS_PROFILE_FREE }}
+        run: python3 DriveLink/tools/sign-ios.py
+      - name: Upload verified distribution IPAs only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: drivelink-ios-release-${{ github.sha }}
+          path: ${{ runner.temp }}/drivelink-ios-signed/
+          if-no-files-found: error
+          retention-days: 90
       - name: Annotate native compiler diagnostics
         if: failure()
         run: python3 DriveLink/ci/annotate_errors.py DriveLink/ios/*.log

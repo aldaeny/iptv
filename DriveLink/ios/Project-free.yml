@@ -17,6 +17,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.drivelink.cast.app.free
+        PROVISIONING_PROFILE_SPECIFIER: "$(DRIVELINK_PROFILE_FREE)"
         SWIFT_VERSION: "5.0"
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: BydMirror-free.entitlements
