@@ -28,6 +28,7 @@ class ScreenCaptureEncoder(
     private val mediaProjection: MediaProjection,
     private val scope: CoroutineScope,
     private val onEncodedNalu: suspend (ByteArray, Int) -> Unit,
+    private val onCodecFallback: (String) -> Unit = {},
     private val onProjectionStopped: () -> Unit = {}
 ) {
     private var codec: MediaCodec? = null
@@ -53,6 +54,7 @@ class ScreenCaptureEncoder(
 
         val (width, height) = profile.dimensionsFor(orientation)
         val requestedMime = profile.codec.mimeType
+        var selectedMime = requestedMime
         var activeCodec: MediaCodec? = null
         for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
             val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
@@ -76,16 +78,19 @@ class ScreenCaptureEncoder(
             }.getOrNull()
             if (created != null) {
                 activeCodec = created
+                selectedMime = candidateMime
                 break
             }
         }
-        val selectedMime = activeCodec?.let { it.codecInfo.mimeType } ?: requestedMime
-        if (selectedMime != requestedMime && runCatching { onCodecFallback(selectedMime) }.isFailure) {
-            if (isActive) onProjectionStopped()
-            return
+        if (selectedMime != requestedMime) {
+            onCodecFallback(selectedMime)
         }
-        val surface = activeCodec!!.createInputSurface()
-        activeCodec.start()
+        val encoder = requireNotNull(activeCodec) {
+            onProjectionStopped()
+            "No hardware video encoder available"
+        }
+        val surface = encoder.createInputSurface()
+        encoder.start()
 
         val display = mediaProjection.createVirtualDisplay(
             "BYD-Wireless-Display",
@@ -98,7 +103,7 @@ class ScreenCaptureEncoder(
             null
         )
 
-        codec = activeCodec
+        codec = encoder
         inputSurface = surface
         virtualDisplay = display
 
@@ -106,12 +111,12 @@ class ScreenCaptureEncoder(
             var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = runCatching { activeCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrElse {
+                val index = runCatching { encoder.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrElse {
                     if (isActive) onProjectionStopped()
                     return@launch
                 }
                 if (index >= 0) {
-                    val outBuffer = activeCodec.getOutputBuffer(index)
+                    val outBuffer = encoder.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
                         val nalu = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
@@ -129,7 +134,7 @@ class ScreenCaptureEncoder(
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         }
                     }
-                    runCatching { activeCodec.releaseOutputBuffer(index, false) }
+                    runCatching { encoder.releaseOutputBuffer(index, false) }
                 }
             }
         }
@@ -171,9 +176,5 @@ class ScreenCaptureEncoder(
             runCatching { mediaProjection.unregisterCallback(projectionCallback) }
             callbackRegistered = false
         }
-    }
-
-    private suspend fun onCodecFallback(selectedMime: String) {
-        // Hook for tests/verification
     }
 }

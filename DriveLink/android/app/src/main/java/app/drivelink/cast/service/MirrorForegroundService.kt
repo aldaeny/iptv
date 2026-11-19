@@ -91,9 +91,20 @@ class MirrorForegroundService : Service() {
             },
             onCodecFallback = { mime ->
                 val session = MirrorSessionCoordinator.connectionState.value as? ConnectionState.Streaming
-                    ?: error("Session no longer active")
-                val codec = VideoCodec.entries.first { it.mimeType == mime }
-                protocol.startMediaSession(session.profile.copy(codec = codec), session.encryptedChannelFingerprint)
+                val codec = VideoCodec.entries.firstOrNull { it.mimeType == mime }
+                if (session != null && codec != null) {
+                    serviceScope.launch {
+                        runCatching {
+                            protocol.startMediaSession(
+                                session.profile.copy(codec = codec),
+                                session.encryptedChannelFingerprint
+                            )
+                        }.onFailure {
+                            android.util.Log.e("DriveLink", "Codec fallback negotiation failed", it)
+                            stopSelf()
+                        }
+                    }
+                }
             },
             onProjectionStopped = {
                 stopSelf()
