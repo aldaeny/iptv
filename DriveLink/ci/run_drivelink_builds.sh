@@ -13,14 +13,16 @@ python3 "$ROOT/tests/verify_isolation.py"
 python3 "$ROOT/tests/verify_protocol.py"
 python3 "$ROOT/tests/verify_release.py"
 node "$ROOT/tests/crypto_fuzz_suite.mjs"
+node "$ROOT/tests/simulator_ui_wiring.mjs"
 
 if command -v go >/dev/null 2>&1; then
   (
     set -o pipefail
     cd "$ROOT/simulator"
+    go vet ./...
     go test -race -v ./... 2>&1 | tee "$LOG_DIR/go-test.log"
-    GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o BydScreenSimulator-Windows.exe .
-    GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o BydScreenSimulator-Linux .
+    GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o BydScreenSimulator-Windows.exe .
+    GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o BydScreenSimulator-Linux .
     sha256sum BydScreenSimulator-Windows.exe BydScreenSimulator-Linux
   )
 else
