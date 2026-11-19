@@ -1,6 +1,6 @@
 # نتائج تنفيذ DriveLink 1.4.1
 
-**NO-GO — REMAINING BLOCKERS**. المصدر المحلي على `arena/5d4feac5-iptv`، HEAD `36effbd7143b744dee812a4377c4a04d86d3c5d6`؛ لم يُنشأ الفرع المقترح لأن اسم الفرع النشط ثابت. نسخة الحالة السابقة في `DriveLink/backups/pre-production.tar.gz` مع SHA-256.
+**NO-GO — REMAINING BLOCKERS**. هذا التقرير يوثّق دورة البناء على `arena/5d4feac5-iptv` عند `36effbd`. بعد توحيد الفروع صارت الشجرة واحدة تحت `DriveLink/` (الفرع `arena/f1a53a8c-iptv`)، وأُعيد تشغيل `verify_isolation.py` و`verify_protocol.py` و`crypto_fuzz_suite.mjs` على الشجرة الموحّدة ونجحت، لكن قيود الأدوات (JDK/SDK/Go/Xcode) ما زالت تمنع إنتاج APK/IPA هنا. نسخة الحالة السابقة في `DriveLink/backups/pre-production.tar.gz` مع SHA-256.
 
 | البند | النتيجة |
 |---|---|

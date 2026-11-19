@@ -1,9 +1,0 @@
-<resources>
-    <string name="app_name">ربط شاشة BYD لاسلكياً</string>
-    <string name="one_tap_connect">اتصال بضغطة واحدة</string>
-    <string name="disconnect">إنهاء الاتصال</string>
-    <string name="auto_connect_label">الربط التلقائي عند دخول نطاق واي فاي السيارة</string>
-    <string name="overlay_notification_title">البث اللاسلكي لشاشة BYD نشط</string>
-    <string name="overlay_notification_body">قناة البث مؤمنة بتشفير AES-256-GCM</string>
-    <string name="accessibility_touch_desc">يتيح التحكم بالهاتف عن بُعد عبر لمس شاشة سيارة BYD</string>
-</resources>

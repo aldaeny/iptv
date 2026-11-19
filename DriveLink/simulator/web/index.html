@@ -3,24 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chinese EV Screen Simulator — محاكي شاشات السيارات الصينية</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <title>DriveLink Cast — Automotive Screen Simulator</title>
   <style>
     :root {
-      --bg: #05070b;
-      --bezel: #0f141e;
-      --card: #111827;
-      --elevated: #1b2434;
-      --accent: #00d4ff;
-      --emerald: #10b981;
-      --amber: #f59e0b;
-      --red: #ef4444;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --border: rgba(255,255,255,0.09);
+      --bg: #050914;
+      --bg-primary: #080f1c;
+      --surface: #101b2d;
+      --elevated: #15243b;
+      --border: #203754;
+      --accent: #00c8ff;
+      --primary-blue: #1677ff;
+      --secondary-cyan: #00e5ff;
+      --success: #00d084;
+      --warning: #ffb547;
+      --error: #ff4545;
+      --text: #f4f8ff;
+      --muted: #9aaec7;
+      --disabled: #65748a;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: radial-gradient(circle at top, #0b1628 0%, var(--bg) 68%);
+      background: radial-gradient(circle at top, var(--bg-primary) 0%, var(--bg) 72%);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
       min-height: 100vh;
@@ -32,17 +36,16 @@
     }
     .toolbar {
       width: 100%;
-      max-width: 1180px;
+      max-width: 1220px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      background: rgba(17, 24, 39, 0.88);
+      background: rgba(16, 27, 45, 0.92);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 18px;
       padding: 10px 16px;
-      backdrop-filter: blur(10px);
     }
     .brand {
       display: flex;
@@ -51,14 +54,20 @@
       font-weight: 700;
       font-size: 15px;
     }
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--amber);
-      box-shadow: 0 0 10px var(--amber);
+    .brand img {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
     }
-    .dot.live { background: var(--emerald); box-shadow: 0 0 12px var(--emerald); }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--warning);
+      box-shadow: 0 0 8px rgba(255, 181, 71, 0.6);
+    }
+    .dot.live { background: var(--success); box-shadow: 0 0 10px rgba(0, 208, 132, 0.7); }
     .controls {
       display: flex;
       flex-wrap: wrap;
@@ -67,7 +76,7 @@
     }
     .car-tabs {
       width: 100%;
-      max-width: 1180px;
+      max-width: 1220px;
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
@@ -78,16 +87,27 @@
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 7px 12px;
+      padding: 8px 13px;
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
-      transition: 0.15s ease;
+      transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+      min-height: 36px;
     }
-    button.btn:hover { border-color: var(--accent); color: var(--accent); }
-    button.btn.primary { background: var(--accent); color: #041016; border-color: var(--accent); }
-    button.btn.primary:hover { opacity: 0.9; color: #041016; }
-    button.btn.active { background: rgba(0,212,255,0.18); border-color: var(--accent); color: var(--accent); }
+    button.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    button.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.btn.primary {
+      background: linear-gradient(90deg, var(--primary-blue), var(--accent));
+      color: #041016;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    button.btn.primary:hover { opacity: 0.92; color: #041016; }
+    button.btn.active {
+      background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+      border-color: var(--accent);
+      color: var(--accent);
+    }
 
     .bezel-wrap {
       display: flex;
@@ -95,31 +115,31 @@
       justify-content: center;
       width: 100%;
       flex: 1;
-      padding: 6px 0;
+      padding: 4px 0;
     }
     .dilink-bezel {
-      background: linear-gradient(145deg, #1a202c, #090d14);
-      border: 2px solid rgba(255,255,255,0.14);
-      border-radius: 26px;
-      padding: 14px;
-      box-shadow: 0 28px 80px rgba(0,0,0,0.75), 0 0 40px rgba(0,212,255,0.08);
-      transition: all 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+      background: linear-gradient(155deg, #162238, #070c17);
+      border: 2px solid var(--border);
+      border-radius: 28px;
+      padding: 12px;
+      box-shadow: 0 24px 70px rgba(0,0,0,0.72), 0 0 28px color-mix(in srgb, var(--accent) 12%, transparent);
+      transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      width: min(94vw, 980px);
-      aspect-ratio: 16 / 9.8;
+      width: min(95vw, 1080px);
+      aspect-ratio: 16 / 9.2;
     }
     .dilink-bezel.portrait {
-      width: min(86vw, 430px);
+      width: min(86vw, 440px);
       aspect-ratio: 9 / 16.5;
     }
     .dilink-bezel.ultrawide {
-      width: min(96vw, 1120px);
-      aspect-ratio: 21 / 9.5;
+      width: min(96vw, 1180px);
+      aspect-ratio: 21 / 9.2;
     }
-    .dilink-bezel.size-12 { max-width: 840px; }
-    .dilink-bezel.size-10 { max-width: 720px; }
+    .dilink-bezel.size-12 { max-width: 880px; }
+    .dilink-bezel.size-10 { max-width: 740px; }
 
     /* Brand themes */
     body.theme-chery { --accent: #f97316; }
@@ -131,9 +151,9 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 6px 14px;
-      background: #0a0f18;
-      border-radius: 14px 14px 0 0;
+      padding: 8px 16px;
+      background: var(--bg-primary);
+      border-radius: 16px 16px 0 0;
       border-bottom: 1px solid var(--border);
       font-size: 12px;
       color: var(--muted);
@@ -144,19 +164,75 @@
       align-items: center;
     }
     .badge {
-      padding: 3px 9px;
+      padding: 3px 10px;
       border-radius: 999px;
       background: var(--elevated);
+      border: 1px solid var(--border);
       color: var(--accent);
       font-weight: 700;
       font-size: 11px;
     }
-    .badge.green { color: var(--emerald); background: rgba(16,185,129,0.15); }
+    .badge.green {
+      color: var(--success);
+      border-color: rgba(0, 208, 132, 0.35);
+      background: rgba(0, 208, 132, 0.14);
+    }
+
+    .hmi-body {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .dilink-bezel.portrait .hmi-body {
+      flex-direction: column-reverse;
+    }
+
+    .hmi-sidebar {
+      width: 92px;
+      background: var(--bg-primary);
+      border-inline-end: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px 8px;
+      gap: 10px;
+    }
+    .dilink-bezel.portrait .hmi-sidebar {
+      width: 100%;
+      flex-direction: row;
+      justify-content: space-around;
+      border-inline-end: none;
+      border-top: 1px solid var(--border);
+      padding: 8px;
+    }
+    .nav-btn {
+      width: 100%;
+      min-height: 58px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .nav-btn.active {
+      background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+      color: var(--text);
+    }
+    .nav-icon { font-size: 18px; color: var(--accent); }
 
     .screen-stage {
       position: relative;
       flex: 1;
-      background: #04060a;
+      background: radial-gradient(circle at center, #0c172a 0%, var(--bg) 75%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -170,12 +246,82 @@
       display: block;
     }
 
+    .hmi-home-grid {
+      position: absolute;
+      inset: 0;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 1.45fr 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+    .dilink-bezel.portrait .hmi-home-grid {
+      grid-template-columns: 1fr;
+      overflow-y: auto;
+    }
+    .hmi-home-grid.hidden { display: none; }
+
+    .hmi-hero-card {
+      background: rgba(16, 27, 45, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      text-align: center;
+      gap: 10px;
+    }
+    .hero-visual-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex: 1;
+      min-height: 0;
+    }
+    .hero-car-img {
+      width: 100%;
+      max-height: 185px;
+      object-fit: cover;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+    }
+    .hmi-side-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: center;
+    }
+    .hmi-info-card {
+      background: rgba(16, 27, 45, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hmi-info-label {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+      letter-spacing: 0.8px;
+    }
+    .hmi-info-value {
+      font-size: 14px;
+      color: var(--text);
+      font-weight: 700;
+    }
+
     .overlay-card {
       position: absolute;
       inset: auto;
       max-width: 90%;
-      background: rgba(17, 24, 39, 0.94);
-      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+      background: rgba(16, 27, 45, 0.96);
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
       border-radius: 22px;
       padding: 24px 28px;
       text-align: center;
@@ -196,7 +342,7 @@
     .overlay-sub { font-size: 13px; color: var(--muted); line-height: 1.6; }
     .ip-box {
       background: var(--elevated);
-      border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
       color: var(--accent);
       padding: 8px 16px;
       border-radius: 12px;
@@ -207,7 +353,7 @@
     }
     .pin-digits {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 40px;
+      font-size: 42px;
       font-weight: 800;
       letter-spacing: 8px;
       color: var(--accent);
@@ -219,29 +365,23 @@
       justify-content: space-between;
       align-items: center;
       padding: 8px 16px;
-      background: #0a0f18;
-      border-radius: 0 0 14px 14px;
+      background: var(--bg-primary);
+      border-radius: 0 0 16px 16px;
       border-top: 1px solid var(--border);
       font-size: 12px;
       color: var(--muted);
     }
     .climate-group { display: flex; gap: 14px; align-items: center; }
     .temp { color: var(--text); font-weight: 700; font-size: 14px; }
-
-    @media (max-width: 600px) {
-      button.btn { min-height: 44px; }
-      .dilink-bezel { max-width: 100%; min-height: 420px; }
-      .overlay-card { max-height: 100%; overflow-y: auto; }
-    }
   </style>
 </head>
 <body>
 
   <div class="toolbar">
     <div class="brand">
+      <img src="/app-icon.png" alt="DriveLink Cast" />
       <span id="connDot" class="dot"></span>
-      <span id="titleText">محاكي شاشات السيارات الصينية</span>
-      <span id="modeHint" role="status" aria-live="polite"></span>
+      <span id="titleText">DriveLink — محاكي شاشات السيارات</span>
     </div>
     <div class="controls">
       <button class="btn" id="btnRotate" onclick="toggleRotate()">تدوير الشاشة (أفقي / عمودي)</button>
@@ -250,7 +390,6 @@
       <button class="btn" id="sz10" onclick="setSize('10')">10.1"</button>
       <button class="btn primary" id="btnDemo" onclick="toggleDemo()">تشغيل بث تجريبي</button>
       <button class="btn" id="btnAudio" onclick="enableAudio()">تفعيل الصوت</button>
-      <button class="btn" id="btnConnection" onclick="toggleConnection()">إيقاف الاتصال</button>
       <button class="btn" onclick="toggleLang()" id="btnLang">EN</button>
     </div>
   </div>
@@ -275,25 +414,70 @@
         <div id="headUnitSpec">BYD DiLink 5.0 • 1920x1080 • TCP 47810 / UDP 47811</div>
       </div>
 
-      <div class="screen-stage" id="stage">
-        <canvas id="videoCanvas"></canvas>
+      <div class="hmi-body">
+        <aside class="hmi-sidebar">
+          <button class="nav-btn active" id="nav-home" onclick="selectNav('home')">
+            <span class="nav-icon">⌂</span>
+            <span id="lblNavHome">الرئيسية</span>
+          </button>
+          <button class="nav-btn" id="nav-media" onclick="selectNav('media')">
+            <span class="nav-icon">▶</span>
+            <span id="lblNavMedia">البث</span>
+          </button>
+          <button class="nav-btn" id="nav-car" onclick="selectNav('car')">
+            <span class="nav-icon">◈</span>
+            <span id="lblNavCar">السيارة</span>
+          </button>
+          <button class="nav-btn" id="nav-diag" onclick="selectNav('diag')">
+            <span class="nav-icon">⚙</span>
+            <span id="lblNavDiag">التشخيص</span>
+          </button>
+        </aside>
 
-        <!-- Waiting Overlay -->
-        <div class="overlay-card" id="waitingCard">
-          <div class="tag" id="brandTag">BYD DiLink WIRELESS RECEIVER</div>
-          <div class="overlay-title" id="waitTitle">جاهز لاستقبال البث من هاتفك</div>
-          <div class="overlay-sub" id="waitSub">
-            افتح تطبيق <b>ربط شاشة BYD</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP التالي:
+        <div class="screen-stage" id="stage">
+          <canvas id="videoCanvas"></canvas>
+
+          <!-- Waiting Automotive HMI Grid -->
+          <div class="hmi-home-grid" id="waitingCard">
+            <div class="hmi-hero-card">
+              <div class="tag" id="brandTag">BYD DiLink WIRELESS RECEIVER</div>
+              <div class="hero-visual-row">
+                <img class="hero-car-img" src="/hero-car.png" alt="BYD Vehicle" />
+              </div>
+              <div class="overlay-title" id="waitTitle">جاهز لاستقبال البث من هاتفك</div>
+              <div class="overlay-sub" id="waitSub">
+                افتح تطبيق <b>DriveLink Cast</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP:
+              </div>
+              <div class="ip-box" id="ipDisplay">127.0.0.1</div>
+            </div>
+
+            <div class="hmi-side-stack">
+              <div class="hmi-info-card">
+                <div class="hmi-info-label" id="lblStatusCard">CONNECTION STATUS</div>
+                <div class="hmi-info-value" id="diagStateValue" style="color: var(--accent);">Listening • TCP 47810 / UDP 47811</div>
+                <div class="overlay-sub" id="modeHint" style="font-size:11px; text-align: start;"></div>
+                <button class="btn" id="btnConnection" onclick="toggleConnection()">إيقاف الاتصال</button>
+              </div>
+              <div class="hmi-info-card">
+                <div class="hmi-info-label" id="lblSecurityCard">SECURITY & DISCOVERY</div>
+                <div class="hmi-info-value" style="color: var(--success);">ECDH P-256 + AES-256-GCM</div>
+                <div class="overlay-sub" style="font-size:11px; text-align: start;">mDNS _byd-mirror._tcp. • Beacon UDP:47813</div>
+              </div>
+              <div class="hmi-info-card">
+                <div class="hmi-info-label" id="lblDisplayCard">ACTIVE DISPLAY PROFILE</div>
+                <div class="hmi-info-value" id="diagDisplayProfile">BYD DiLink 5.0 (15.6")</div>
+                <div class="overlay-sub" style="font-size:11px; text-align: start;">WebCodecs H.264 / H.265 + AAC 48kHz + Touch Back-Channel</div>
+              </div>
+            </div>
           </div>
-          <div class="ip-box" id="ipDisplay">127.0.0.1</div>
-        </div>
 
-        <!-- PIN Verification Overlay -->
-        <div class="overlay-card hidden" id="pinCard">
-          <div class="tag" style="color:var(--emerald)">SECURE PAIRING</div>
-          <div class="overlay-title" id="pinPhoneName">BYD Phone</div>
-          <div class="pin-digits" id="pinDigits">000000</div>
-          <div class="overlay-sub" id="pinFp">Fingerprint: ----</div>
+          <!-- PIN Verification Overlay -->
+          <div class="overlay-card hidden" id="pinCard">
+            <div class="tag" style="color:var(--success)">SECURE PAIRING</div>
+            <div class="overlay-title" id="pinPhoneName">BYD Phone</div>
+            <div class="pin-digits" id="pinDigits">000000</div>
+            <div class="overlay-sub" id="pinFp">Fingerprint: ----</div>
+          </div>
         </div>
       </div>
 
@@ -318,7 +502,7 @@
         theme: '',
         ultrawide: false,
         canRotate: true,
-        accent: '#00d4ff'
+        accent: '#00c8ff'
       },
       chery: {
         name: 'Jetour / Chery LionOS',
@@ -388,6 +572,23 @@
     setInterval(updateClock, 1000);
     updateClock();
 
+    function selectNav(tab) {
+      ['home', 'media', 'car', 'diag'].forEach(id => {
+        document.getElementById('nav-' + id).classList.toggle('active', id === tab);
+      });
+      if (tab === 'media' && !demoRunning && document.getElementById('fpsBadge').classList.contains('hidden')) {
+        toggleDemo();
+      } else if (tab === 'home' && demoRunning) {
+        toggleDemo();
+      } else if (tab === 'car') {
+        const order = Object.keys(CAR_PROFILES);
+        const next = order[(order.indexOf(activeCar) + 1) % order.length];
+        selectCar(next);
+      } else if (tab === 'diag') {
+        enableAudio();
+      }
+    }
+
     function selectCar(key) {
       activeCar = key;
       const prof = CAR_PROFILES[key];
@@ -402,27 +603,33 @@
         bezel.classList.remove('portrait');
       }
       document.getElementById('btnRotate').disabled = !prof.canRotate;
-      document.getElementById('btnRotate').style.opacity = prof.canRotate ? '1' : '0.45';
       document.getElementById('brandTag').textContent = prof.tag;
       document.getElementById('headUnitSpec').textContent = prof.spec;
+      document.getElementById('diagDisplayProfile').textContent = prof.name;
       document.getElementById('powerBadge').textContent = prof.power;
     }
 
     function toggleLang() {
       isArabic = !isArabic;
-      renderConnectionState();
       document.documentElement.dir = isArabic ? 'rtl' : 'ltr';
       document.getElementById('btnLang').textContent = isArabic ? 'EN' : 'AR';
-      document.getElementById('titleText').textContent = isArabic ? 'محاكي شاشات السيارات الصينية' : 'Chinese EV Screen Simulator';
+      renderConnectionState();
+      document.getElementById('titleText').textContent = isArabic
+        ? 'DriveLink — محاكي شاشات السيارات'
+        : 'DriveLink — Automotive Simulator';
       document.getElementById('btnRotate').textContent = isArabic ? 'تدوير الشاشة (أفقي / عمودي)' : 'Rotate Screen';
       document.getElementById('btnDemo').textContent = demoRunning
         ? (isArabic ? 'إيقاف البث التجريبي' : 'Stop Demo')
         : (isArabic ? 'تشغيل بث تجريبي' : 'Start Demo Preview');
       document.getElementById('btnAudio').textContent = isArabic ? 'تفعيل الصوت' : 'Enable Audio';
-      document.getElementById('waitTitle').textContent = isArabic ? 'جاهز لاستقبال البث من هاتفك' : 'Ready for Wireless Phone Mirroring';
+      document.getElementById('waitTitle').textContent = isArabic ? 'جاهز لاستقبال البث من هاتفك' : 'Your Phone. On Your Car Screen.';
       document.getElementById('waitSub').innerHTML = isArabic
-        ? 'افتح تطبيق <b>ربط شاشة BYD</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP التالي:'
-        : 'Open <b>BYD Mirror</b> on your phone and tap <b>One-Tap Connect</b> or enter this IP:';
+        ? 'افتح تطبيق <b>DriveLink Cast</b> على الهاتف واضغط <b>اتصال بضغطة واحدة</b> أو استخدم رقم الـ IP:'
+        : 'Open <b>DriveLink Cast</b> on your phone and tap <b>One-Tap Connect</b> or enter this IP:';
+      document.getElementById('lblNavHome').textContent = isArabic ? 'الرئيسية' : 'Home';
+      document.getElementById('lblNavMedia').textContent = isArabic ? 'البث' : 'Media';
+      document.getElementById('lblNavCar').textContent = isArabic ? 'السيارة' : 'Car';
+      document.getElementById('lblNavDiag').textContent = isArabic ? 'التشخيص' : 'Audio';
     }
 
     function toggleRotate() {
@@ -460,6 +667,8 @@
         document.getElementById('waitingCard').classList.remove('hidden');
         document.getElementById('connDot').classList.remove('live');
         document.getElementById('fpsBadge').classList.add('hidden');
+        document.getElementById('codecBadge').textContent = 'READY';
+        document.getElementById('statusFooter').textContent = isArabic ? 'وضع الانتظار' : 'Waiting';
         return;
       }
 
@@ -482,27 +691,27 @@
         }
         t += 0.04;
         const grad = ctx.createLinearGradient(0, 0, w, h);
-        grad.addColorStop(0, '#071324');
-        grad.addColorStop(1, '#09242e');
+        grad.addColorStop(0, '#050914');
+        grad.addColorStop(1, '#081b33');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, w, h);
 
         ctx.strokeStyle = prof.accent;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2.5;
         ctx.strokeRect(24, 24, w - 48, h - 48);
 
         ctx.beginPath();
         ctx.arc(w / 2, h / 2 - 20, 44 + Math.sin(t * 2) * 8, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillStyle = 'rgba(0,200,255,0.08)';
         ctx.fill();
         ctx.strokeStyle = prof.accent;
         ctx.stroke();
 
-        ctx.fillStyle = '#f8fafc';
+        ctx.fillStyle = '#f4f8ff';
         ctx.font = 'bold 26px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`${prof.name} — Live Mirror`, w / 2, h / 2 + 62);
-        ctx.fillStyle = '#10b981';
+        ctx.fillText(`${prof.name} — Live Mirror Preview`, w / 2, h / 2 + 62);
+        ctx.fillStyle = '#00d084';
         ctx.font = 'bold 15px monospace';
         ctx.fillText(`ECDH P-256 + AES-256-GCM • ${w}x${h} • 60 FPS`, w / 2, h / 2 + 94);
       }, 33);
@@ -527,7 +736,13 @@
     }
 
     function initVideoDecoder(mime, overrideCodec) {
-      if (!('VideoDecoder' in window)) return;
+      if (!('VideoDecoder' in window)) {
+        document.getElementById('codecBadge').textContent = 'NO WEBCODECS';
+        document.getElementById('diagStateValue').textContent = isArabic
+          ? 'المتصفح لا يدعم WebCodecs (استخدم Chrome أو Edge)'
+          : 'WebCodecs unsupported in this browser (use Chrome/Edge)';
+        return;
+      }
       // Periodic status messages must not replace an SPS-selected codec for this stream.
       const codec = overrideCodec || (configuredMime === mime && configuredCodec) || (mime.includes('hevc') ? 'hvc1.1.6.L120.90' : 'avc1.42002A');
       if (configuredMime === mime && configuredCodec === codec && videoDecoder && videoDecoder.state === 'configured') return;
@@ -777,6 +992,7 @@
         document.getElementById('connDot').classList.remove('live');
         document.getElementById('fpsBadge').classList.add('hidden');
         document.getElementById('codecBadge').textContent = 'READY';
+        document.getElementById('diagStateValue').textContent = 'Listening • TCP 47810 / UDP 47811';
         document.getElementById('statusFooter').textContent = isArabic ? 'وضع الانتظار' : 'Waiting';
       } else if (msg.state === 'pairing') {
         document.getElementById('waitingCard').classList.add('hidden');
@@ -784,6 +1000,7 @@
         document.getElementById('pinPhoneName').textContent = msg.phoneName || 'BYD Phone';
         document.getElementById('pinDigits').textContent = msg.pin || '000000';
         document.getElementById('pinFp').textContent = 'Fingerprint: ' + (msg.fingerprint || '----');
+        document.getElementById('diagStateValue').textContent = 'Pairing PIN Verification';
         document.getElementById('statusFooter').textContent = isArabic ? 'التحقق من الرمز' : 'PIN Verification';
       } else if (msg.state === 'streaming') {
         if (demoRunning) toggleDemo();
@@ -794,6 +1011,7 @@
         fpsBadge.classList.remove('hidden');
         fpsBadge.textContent = `LIVE • ${msg.fps || 60} FPS`;
         document.getElementById('codecBadge').textContent = (msg.mime || '').includes('hevc') ? 'H.265' : 'H.264';
+        document.getElementById('diagStateValue').textContent = `Streaming • ${msg.fps || 60} FPS`;
         document.getElementById('statusFooter').textContent = `${msg.phoneName || 'Phone'} • ${msg.fingerprint || ''}`;
         document.getElementById('bezel').classList.toggle('portrait', msg.isLandscape === false);
         isPortrait = msg.isLandscape === false;
@@ -802,18 +1020,11 @@
       }
     }
 
-    function sendCanvasTouch(ev, action) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-      const y = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
-      ws.send(JSON.stringify({ type: 'touch', x, y, action }));
-    }
     let pointerDown = false;
     canvas.addEventListener('pointerdown', ev => { pointerDown = true; sendCanvasTouch(ev, 0); });
     canvas.addEventListener('pointermove', ev => { if (pointerDown) sendCanvasTouch(ev, 2); });
-    canvas.addEventListener('pointerup', ev => { if (pointerDown) { if (pointerDown) sendCanvasTouch(ev, 1); pointerDown = false; } });
+    canvas.addEventListener('pointerup', ev => { if (pointerDown) { pointerDown = false; sendCanvasTouch(ev, 1); } });
+    canvas.addEventListener('pointercancel', ev => { if (pointerDown) { pointerDown = false; sendCanvasTouch(ev, 1); } });
 
     window.addEventListener('pagehide', () => {
       pageActive = false;
@@ -826,6 +1037,7 @@
       retries = 0;
       connectWebSocket();
     });
+
     connectWebSocket();
   </script>
 </body>

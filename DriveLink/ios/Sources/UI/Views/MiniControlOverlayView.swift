@@ -20,12 +20,12 @@ public struct MiniControlOverlayView: View {
     public var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(BydColors.evEmerald)
+                .fill(BydColors.success)
                 .frame(width: 8, height: 8)
 
             Text("BYD • LIVE")
                 .font(.caption.bold())
-                .foregroundColor(BydColors.evEmerald)
+                .foregroundColor(BydColors.success)
 
             Button(action: onToggleOrientation) {
                 Label(
@@ -35,8 +35,8 @@ public struct MiniControlOverlayView: View {
                 .font(.caption.bold())
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(BydColors.surfaceElevated)
-                .foregroundColor(BydColors.textPrimary)
+                .background(BydColors.elevatedSurface)
+                .foregroundColor(BydColors.primaryText)
                 .clipShape(Capsule())
             }
 
@@ -45,18 +45,18 @@ public struct MiniControlOverlayView: View {
                     .font(.caption.bold())
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(BydColors.dangerRed)
+                    .background(BydColors.error)
                     .foregroundColor(.white)
                     .clipShape(Capsule())
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(BydColors.surfaceCard.opacity(0.95))
+        .background(BydColors.surface.opacity(0.95))
         .overlay(
-            Capsule().stroke(BydColors.evCyan.opacity(0.6), lineWidth: 1)
+            Capsule().stroke(BydColors.primary.opacity(0.55), lineWidth: 1)
         )
         .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
+        .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
     }
 }

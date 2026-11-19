@@ -1,4 +1,4 @@
-# ROADMAP — BYD Wireless Mirror
+# ROADMAP — DriveLink Cast
 
 ## Near-Term (Required for `GO — VERIFIED`)
 1. Run full Gradle (`standard` & `fullTouch` + `receiver-dilink`), Swift/Xcode (`Project.yml` & `Project-free.yml`), and Go (`simulator`) builds & unit tests on the latest local commit.

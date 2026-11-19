@@ -1,18 +1,20 @@
 # Android Release Keystore Setup
 
-Both `byd-mirror/android` and `byd-mirror/receiver-dilink` automatically sign release builds with your production keystore when the following environment variables are present, and safely fall back to `debug` signing when absent:
+Both `DriveLink/android` and `DriveLink/receiver-dilink` sign the `release` variant **only** when a production
+keystore is supplied through the `DRIVELINK_*` environment variables. Without them the release variant is left
+unsigned instead of silently falling back to the debug key.
 
-- `BYD_KEYSTORE_PATH`
-- `BYD_KEYSTORE_PASSWORD`
-- `BYD_KEY_ALIAS`
-- `BYD_KEY_PASSWORD`
+- `DRIVELINK_KEYSTORE_PATH`
+- `DRIVELINK_KEYSTORE_PASSWORD`
+- `DRIVELINK_KEY_ALIAS`
+- `DRIVELINK_KEY_PASSWORD`
 
 ## 1. Generate a Keystore Locally (Never Commit to Git)
 
 ```bash
 keytool -genkeypair -v \
-  -keystore byd-release.jks \
-  -alias bydmirror \
+  -keystore drivelink-release.jks \
+  -alias drivelink \
   -keyalg RSA \
   -keysize 2048 \
   -validity 10000
@@ -21,19 +23,23 @@ keytool -genkeypair -v \
 Encode it as Base64 for GitHub Actions Secrets:
 
 ```bash
-base64 -w 0 byd-release.jks > byd-release.jks.b64
-# On macOS: base64 -i byd-release.jks | tr -d '\n' > byd-release.jks.b64
+base64 -w 0 drivelink-release.jks > drivelink-release.jks.b64
+# On macOS: base64 -i drivelink-release.jks | tr -d '\n' > drivelink-release.jks.b64
 ```
 
-## 2. Add Repository Secrets in GitHub
+## 2. Add Repository Secrets and Variables in GitHub
 
 In **Settings → Secrets and variables → Actions**, add:
 
-| Secret Name | Value |
+| Secret / Variable | Value |
 | --- | --- |
-| `BYD_RELEASE_KEYSTORE_BASE64` | Contents of `byd-release.jks.b64` |
-| `BYD_KEYSTORE_PASSWORD` | Keystore password |
-| `BYD_KEY_ALIAS` | `bydmirror` (or your chosen alias) |
-| `BYD_KEY_PASSWORD` | Key password |
+| `DRIVELINK_KEYSTORE_BASE64` (secret) | Contents of `drivelink-release.jks.b64` |
+| `DRIVELINK_KEYSTORE_PASSWORD` (secret) | Keystore password |
+| `DRIVELINK_KEY_ALIAS` (secret) | `drivelink` (or your chosen alias) |
+| `DRIVELINK_KEY_PASSWORD` (secret) | Key password |
+| `DRIVELINK_SIGNER_SHA256` (variable) | SHA-256 fingerprint of the signing certificate (`apksigner verify --print-certs`) |
 
-Once configured, `.github/workflows/byd-mirror-build.yml` automatically signs both Android Phone APKs (`standard` and `fullTouch`) and the BYD DiLink Receiver APK using your release keystore.
+Once configured, the `android` job of `.github/workflows/drivelink-android-release.yml` decodes the keystore to a
+temporary file, exports `DRIVELINK_KEYSTORE_PATH`, and builds/signs both Android Phone APKs (`standard` and
+`fullTouch`) plus the DriveLink Receiver APK, then verifies signatures and SHA-256 via
+`DriveLink/tools/verify-android-build.sh`.

@@ -1,2 +1,0 @@
--keep class com.byd.mirror.** { *; }
--dontwarn kotlinx.coroutines.**

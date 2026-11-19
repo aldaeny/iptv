@@ -15,6 +15,7 @@ Collection of publicly available IPTV (Internet Protocol television) channels fr
 - 🛠 [Contribution](#contribution)
 - ⚖ [Legal](#legal)
 - © [License](#license)
+- 🚗 [DriveLink (car screen mirroring)](#drivelink-car-screen-mirroring)
 
 ## How to use?
 
@@ -69,6 +70,18 @@ And thank you to everyone who has already contributed!
 ### Contributors
 
 <a href="https://github.com/iptv-org/iptv/graphs/contributors"><img src="https://opencollective.com/iptv-org/contributors.svg?width=890" /></a>
+
+## DriveLink (car screen mirroring)
+
+This repository also ships **DriveLink**, a single unified sub-project that mirrors a phone screen onto in-car
+displays (Android + iOS senders, an Android receiver and a Go/web simulator). The former duplicate
+`byd-mirror/` tree was merged into `DriveLink/`, so there is exactly one source tree, one package identity
+(`app.drivelink.cast*`), one version (`1.4.1`) and one CI workflow.
+
+- Code, docs and tests: [`DriveLink/`](DriveLink/README.md)
+- Verification: `python3 DriveLink/tests/verify_isolation.py`, `python3 DriveLink/tests/verify_protocol.py`,
+  `node DriveLink/tests/crypto_fuzz_suite.mjs`
+- CI/build: `.github/workflows/drivelink-android-release.yml`
 
 ## Legal
 
