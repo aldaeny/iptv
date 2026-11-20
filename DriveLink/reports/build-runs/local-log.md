@@ -80,3 +80,47 @@ then run the real build. Every line below is the observed result, not a plan.
 
 Nothing in this round produced an APK, a signature, a SHA-256 or an install
 result, so the release status remains **NO-GO**.
+
+---
+
+## Owner action required — exact, verified, current
+
+Re-checked after PR #6 merged into `master` (`4fc6e6e`). The only thing standing
+between the merged source and a real APK is a repository switch that the agent
+token is not allowed to read or flip.
+
+| Probe | Observed now |
+|---|---|
+| `gh workflow run drivelink-android-release.yml --ref master` | `HTTP 422: Actions has been disabled for this repository` |
+| `gh api repos/aldaeny/iptv/actions/permissions` | `HTTP 403 Resource not accessible by integration` |
+| `gh secret list` / `.../actions/variables` | `HTTP 403 Resource not accessible by integration` |
+| runs of any `drivelink*` workflow, ever | `0` |
+| local toolchain (`java`,`gradle`,`sdkmanager`,`aapt`,`apksigner`,`adb`,`xcodebuild`) | all missing |
+
+### Step 1 — enable Actions (unblocks the build)
+<https://github.com/aldaeny/iptv/settings/actions> →
+**Actions permissions** → *Allow all actions and reusable workflows* → **Save**.
+(Forks have Actions disabled by default; that is the most likely cause of the 422.)
+
+### Step 2 — signing material (unblocks a *publishable* build)
+Secrets: <https://github.com/aldaeny/iptv/settings/secrets/actions>
+`DRIVELINK_KEYSTORE_BASE64`, `DRIVELINK_KEYSTORE_PASSWORD`,
+`DRIVELINK_KEY_ALIAS`, `DRIVELINK_KEY_PASSWORD`.
+Variable: <https://github.com/aldaeny/iptv/settings/variables/actions>
+`DRIVELINK_SIGNER_SHA256` = 64 lowercase hex chars, the SHA-256 of the release
+certificate, no colons.
+
+Without Step 2 the workflow still builds, but writes the APKs to
+`drivelink-unsigned-<sha>`, and `drivelink-publish-release.yml` refuses to download
+that namespace — by design, proven by `publish_guard_selftest.py`.
+
+### Step 3 — run
+Dispatch **DriveLink CI & Android Release Build** on `master`, then
+**DriveLink Publish Release** with that run's `run_id`.
+
+### iOS (Phase 7) — unchanged and honest
+`DriveLink/ios/Project.yml` + `Project-free.yml` are single-target specs, version
+1.4.1 (3), Bonjour `_byd-mirror._tcp.`, App Group `group.app.drivelink.cast.shared`;
+the `ios` job builds on `macos-*` and uploads **unsigned** IPAs only. A signed,
+installable IPA needs macOS + Xcode + an Apple distribution certificate and
+provisioning profile, none of which exist in this environment. No IPA is claimed.
