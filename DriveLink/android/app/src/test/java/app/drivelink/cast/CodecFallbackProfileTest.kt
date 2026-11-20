@@ -7,6 +7,7 @@ import app.drivelink.cast.core.model.ThermalLevel
 import app.drivelink.cast.core.model.VideoCodec
 import app.drivelink.cast.core.session.MirrorSessionCoordinator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -110,5 +111,20 @@ class CodecFallbackProfileTest {
         }
 
         assertEquals(VideoCodec.H264, askedCodec)
+    }
+
+    @Test
+    fun `records a pre-streaming fallback without fabricating a live session`() {
+        // No session has been started yet: the encoder can still open a different codec than the
+        // one negotiated, and that must be recorded without inventing a Streaming state. This is the
+        // case the service logs instead of announcing, and that activateStreaming then declares.
+        runBlocking { MirrorSessionCoordinator.disconnect() }
+        MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H265)
+
+        val updated = MirrorSessionCoordinator.applyActiveCodec(VideoCodec.H264)
+
+        assertNotNull(updated)
+        assertEquals(VideoCodec.H264, MirrorSessionCoordinator.activeProfile.value.codec)
+        assertEquals(ConnectionState.Idle, MirrorSessionCoordinator.connectionState.value)
     }
 }
