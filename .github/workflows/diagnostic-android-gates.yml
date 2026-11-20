@@ -1,0 +1,108 @@
+name: Diagnostic – Android gates (temporary)
+
+on:
+  push:
+    branches: [arena/d63cd414-iptv]
+
+permissions:
+  contents: read
+
+jobs:
+  android-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gate 1 — Connectivity
+        run: |
+          mkdir -p "$RUNNER_TEMP/diagnostic-logs"
+          (
+            failed=0
+            probe() {
+              local label=$1 rc=0
+              shift
+              printf '\n[%s]\n' "$label"
+              curl --silent --show-error --fail --connect-timeout 10 --max-time 30 \
+                --range 0-0 --output /dev/null \
+                --write-out 'HTTP=%{http_code} TLS_verify=%{ssl_verify_result} redirects=%{num_redirects}\n' \
+                "$@" || rc=$?
+              echo "curl_exit=$rc"
+              if (( rc != 0 )); then failed=1; fi
+            }
+            github=https://github.com/gradle/gradle-distributions/releases/download/v8.10.2/gradle-8.10.2-bin.zip
+            probe services.gradle.org https://services.gradle.org/distributions/gradle-8.10.2-bin.zip.sha256
+            probe downloads.gradle.org https://downloads.gradle.org/distributions/gradle-8.10.2-bin.zip.sha256
+            probe 'Official GitHub link (initial response)' "$github"
+            probe 'Official GitHub link (including redirect destination)' --location "$github"
+            probe repo.maven.apache.org https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom
+            probe dl.google.com https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/8.7.2/gradle-8.7.2.pom
+            probe maven.google.com --location https://maven.google.com/com/android/tools/build/gradle/8.7.2/gradle-8.7.2.pom
+            probe plugins.gradle.org https://plugins.gradle.org/m2/
+            exit "$failed"
+          ) 2>&1 | tee "$RUNNER_TEMP/diagnostic-logs/gate-1.log"
+      - name: Gate 2 — Official distribution and SHA-256
+        run: |
+          (
+            set -euo pipefail
+            url=$(sed -n 's/^distributionUrl=//p' DriveLink/android/gradle/wrapper/gradle-wrapper.properties | tr -d '\\')
+            receiver_url=$(sed -n 's/^distributionUrl=//p' DriveLink/receiver-dilink/gradle/wrapper/gradle-wrapper.properties | tr -d '\\')
+            [[ "$url" == "$receiver_url" && "$url" == https://services.gradle.org/distributions/gradle-8.10.2-bin.zip ]]
+            zip="$RUNNER_TEMP/${url##*/}"
+            curl -fsSL --connect-timeout 15 --max-time 300 "$url" -o "$zip"
+            curl -fsSL --connect-timeout 15 --max-time 60 "$url.sha256" -o "$zip.sha256"
+            read -r expected _ < <(cat "$zip.sha256"; echo)
+            actual=$(sha256sum "$zip" | cut -d ' ' -f 1)
+            printf 'Official SHA-256: %s\nComputed SHA-256: %s\n' "$expected" "$actual"
+            [[ "$expected" =~ ^[a-fA-F0-9]{64}$ && "${expected,,}" == "$actual" ]]
+            # Seed the standard Wrapper cache with the verified ZIP, not a second download.
+            key=$(python3 -c 'import hashlib,sys; n=int.from_bytes(hashlib.md5(sys.argv[1].encode()).digest(), "big"); s=""; exec("while n:\n n,r=divmod(n,36)\n s=\"0123456789abcdefghijklmnopqrstuvwxyz\"[r]+s"); print(s or "0")' "$url")
+            home="$RUNNER_TEMP/diagnostic-gradle-home"
+            cache="$home/wrapper/dists/gradle-8.10.2-bin/$key"
+            mkdir -p "$cache"
+            cp "$zip" "$cache/"
+            echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
+          ) 2>&1 | tee "$RUNNER_TEMP/diagnostic-logs/gate-2.log"
+      - name: Gate 3 — Wrapper versions
+        run: |
+          failed=0
+          for project in android receiver-dilink; do
+            log="$RUNNER_TEMP/diagnostic-logs/gate-3-$project.log"
+            if ! (cd "DriveLink/$project" && ./gradlew --version) 2>&1 | tee "$log"; then failed=1; fi
+            if ! grep -Fx 'Gradle 8.10.2' "$log"; then failed=1; fi
+          done
+          exit "$failed"
+      - name: Gate 4 — Unit Tests and Lint
+        run: |
+          failed=0
+          run_tasks() {
+            local project=$1 label=$2
+            shift 2
+            if ! (cd "DriveLink/$project" && ./gradlew --no-daemon --stacktrace "$@") 2>&1 | tee "$RUNNER_TEMP/diagnostic-logs/gate-4-$project-$label.log"; then
+              failed=1
+            fi
+          }
+          run_tasks android tests :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest
+          run_tasks android lint :app:lintStandardDebug :app:lintFullTouchDebug
+          run_tasks receiver-dilink tests :app:testDebugUnitTest
+          run_tasks receiver-dilink lint :app:lintDebug
+          exit "$failed"
+      - name: Upload diagnostic logs and reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: diagnostic-android-gates
+          path: |
+            ${{ runner.temp }}/diagnostic-logs/*.log
+            DriveLink/android/**/build/test-results/**/*.xml
+            DriveLink/android/**/build/reports/**
+            DriveLink/receiver-dilink/**/build/test-results/**/*.xml
+            DriveLink/receiver-dilink/**/build/reports/**
