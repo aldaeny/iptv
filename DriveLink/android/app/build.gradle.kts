@@ -116,6 +116,8 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // ApplicationProvider for Robolectric service tests.
+    testImplementation("androidx.test:core:1.6.1")
     // Robolectric: real Android framework on the JVM — enables executable tests
     // for Service lifecycle and cleanup paths that plain JUnit cannot touch.
     // 4.14.1 supports AGP 8.7 / SDK 34-35 / JDK 17.

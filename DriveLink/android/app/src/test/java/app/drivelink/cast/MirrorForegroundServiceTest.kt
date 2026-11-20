@@ -13,8 +13,6 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ForegroundServiceTypePolicy
-import org.robolectric.shadows.ShadowApplication
 
 /**
  * Executable JVM tests for MirrorForegroundService lifecycle and cleanup,
@@ -31,11 +29,6 @@ class MirrorForegroundServiceTest {
 
     @Before
     fun setUp() {
-        // The manifest declares FOREGROUND_SERVICE_MEDIA_PROJECTION; this policy
-        // keeps the shadow lenient when startForeground is exercised in tests.
-        ShadowApplication.setForegroundServiceTypePolicy(
-            ForegroundServiceTypePolicy.ALWAYS_DECLARED
-        )
         resetCoordinatorCallbacks()
     }
 
