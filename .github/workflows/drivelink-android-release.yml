@@ -1,9 +1,11 @@
 name: DriveLink CI & Android Release Build
 
 # Two paths:
-#  * pull_request / push  -> verification only (identity, protocol, crypto, syntax).
-#  * workflow_dispatch    -> full build of Standard + FullTouch + Receiver APKs,
-#                            signing + metadata verification, SHA-256 and iOS build.
+#  * pull_request / push (arena/**)  -> verification only (identity, protocol, crypto, syntax).
+#  * push (master)                   -> verification + full Android build, unit tests and lint
+#                                       (unsigned diagnostic artifacts; no signing, no publish).
+#  * workflow_dispatch               -> full build of Standard + FullTouch + Receiver APKs,
+#                                       signing + metadata verification, SHA-256 and iOS build.
 #
 # Release publication runs only in the separate, manually triggered
 # "DriveLink Publish Release" workflow, after a release run has been reviewed.
@@ -114,7 +116,11 @@ jobs:
           retention-days: 30
 
   android:
-    if: github.event_name != 'push'
+    # Run Android on master pushes too: a green `verify` on master proves nothing
+    # about the Android build (this gap let a non-compiling tree reach master).
+    # Signing inputs stay workflow_dispatch-only, so a push run yields unsigned
+    # diagnostic artifacts and can never publish.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/master'
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
