@@ -116,9 +116,9 @@ class ScreenProjectionDeviceTest {
             f.startSession(Color.RED)
             f.expectPixels(320, 240, RED)
             val instrumentation = InstrumentationRegistry.getInstrumentation()
-            val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
             fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                automation.executeShellCommand(command)
+                instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                    .executeShellCommand(command)
             ).use { it.readBytes() }
             val component = "${instrumentation.targetContext.packageName}/app.drivelink.cast.service.BydTouchAccessibilityService"
             try {
@@ -129,28 +129,28 @@ class ScreenProjectionDeviceTest {
                 val touch = f.receiver::sendTouchEvent
                 // Service binding is asynchronous; retry an isolated tap until observed.
                 withTimeout(8_000) {
-                    while (events.isEmpty()) {
+                    while (events.none { it.action == MotionEvent.ACTION_UP }) {
                         touch(.5f, .5f, 0); touch(.5f, .5f, 1)
                         delay(500)
                     }
                 }
                 events.clear()
-                fun up(): ObservedTouch {
+                fun up(stage: String): ObservedTouch {
                     val end = SystemClock.uptimeMillis() + 4_000
                     while (SystemClock.uptimeMillis() < end) {
                         val event = events.poll(100, TimeUnit.MILLISECONDS) ?: continue
                         if (event.action == MotionEvent.ACTION_UP) return event
                     }
-                    throw AssertionError("No injected ACTION_UP reached the phone")
+                    throw AssertionError("No injected ACTION_UP reached the phone: $stage")
                 }
                 touch(.4f, .5f, 0); touch(.4f, .5f, 1)
                 touch(.4f, .5f, 0); touch(.4f, .5f, 1)
-                repeat(2) { assertTrue(kotlin.math.abs(up().x - .4f) < .04f) }
+                repeat(2) { assertTrue(kotlin.math.abs(up("double tap ${it + 1}").x - .4f) < .04f) }
                 touch(.5f, .5f, 0); delay(700); touch(.5f, .5f, 1)
-                assertTrue("Long press duration not preserved", up().duration >= 500)
+                assertTrue("Long press duration not preserved", up("long press").duration >= 500)
                 for ((x, y) in listOf(.25f to .5f, .75f to .5f, .5f to .25f, .5f to .75f)) {
                     touch(.5f, .5f, 0); delay(120); touch(x, y, 2); touch(x, y, 1)
-                    val end = up()
+                    val end = up("swipe to $x,$y")
                     assertTrue("Swipe endpoint mismatch: $end", kotlin.math.abs(end.x - x) < .04f && kotlin.math.abs(end.y - y) < .04f)
                 }
                 f.device.setOrientationLeft()
@@ -163,9 +163,11 @@ class ScreenProjectionDeviceTest {
                 f.replaceOutput(240, 320)
                 f.expectPixels(240, 320, BLUE)
                 f.observeTouches(events)
+                shell("settings get secure enabled_accessibility_services")
+                delay(500) // Allow accessibility to rebind if UiDevice changed automation flags.
                 events.clear()
                 touch(.31f, .63f, 0); touch(.31f, .63f, 1)
-                val rotated = up()
+                val rotated = up("rotated tap")
                 assertTrue("Touch axes changed after rotation: $rotated",
                     kotlin.math.abs(rotated.x - .31f) < .04f && kotlin.math.abs(rotated.y - .63f) < .04f)
                 touch(.5f, .5f, 0); touch(.5f, .5f, 3); touch(.5f, .5f, 1)
