@@ -153,6 +153,21 @@ class ScreenProjectionDeviceTest {
                     val end = up()
                     assertTrue("Swipe endpoint mismatch: $end", kotlin.math.abs(end.x - x) < .04f && kotlin.math.abs(end.y - y) < .04f)
                 }
+                f.device.setOrientationLeft()
+                f.device.waitForIdle()
+                f.paint(Color.BLUE)
+                withContext(Dispatchers.Main) { MirrorSessionCoordinator.toggleOrientation() }
+                withTimeout(10_000) {
+                    f.receiver.state.first { it is ReceiverState.MirroringActive && !it.isLandscape }
+                }
+                f.replaceOutput(240, 320)
+                f.expectPixels(240, 320, BLUE)
+                f.observeTouches(events)
+                events.clear()
+                touch(.31f, .63f, 0); touch(.31f, .63f, 1)
+                val rotated = up()
+                assertTrue("Touch axes changed after rotation: $rotated",
+                    kotlin.math.abs(rotated.x - .31f) < .04f && kotlin.math.abs(rotated.y - .63f) < .04f)
                 touch(.5f, .5f, 0); touch(.5f, .5f, 3); touch(.5f, .5f, 1)
                 delay(250)
                 assertTrue("Cancelled or orphan gesture was injected", events.isEmpty())
