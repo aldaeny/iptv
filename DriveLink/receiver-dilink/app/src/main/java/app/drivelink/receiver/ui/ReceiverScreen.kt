@@ -143,7 +143,8 @@ fun ReceiverScreen(
                             if (view.width <= 0 || view.height <= 0) return@setOnTouchListener false
                             val actionByte: Byte = when (event.actionMasked) {
                                 MotionEvent.ACTION_DOWN -> 0
-                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> 1
+                                MotionEvent.ACTION_UP -> 1
+                                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> 3
                                 MotionEvent.ACTION_MOVE -> 2
                                 else -> return@setOnTouchListener false
                             }

@@ -176,7 +176,8 @@ class BydProtocolWrapper(
         onQosReport: (fps: Int, droppedPackets: Int) -> Unit,
         onHeartbeatRtt: (rttMs: Int) -> Unit,
         onTouchEvent: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> },
-        onUnexpectedDisconnect: () -> Unit = {}
+        onUnexpectedDisconnect: () -> Unit = {},
+        onSessionStopped: () -> Unit = {}
     ) {
         controlReaderJob?.cancel()
         controlReaderJob = scope.launch(Dispatchers.IO) {
@@ -207,12 +208,14 @@ class BydProtocolWrapper(
                         }
                     }
                     ProtocolOpcode.TOUCH_EVENT -> {
-                        if (packet.payload.size >= 9) {
+                        if (mediaStarted && packet.payload.size == 9) {
                             val buf = ByteBuffer.wrap(packet.payload).order(ByteOrder.BIG_ENDIAN)
                             val xNorm = buf.float
                             val yNorm = buf.float
                             val action = buf.get()
-                            onTouchEvent(xNorm, yNorm, action)
+                            if (xNorm in 0f..1f && yNorm in 0f..1f && action.toInt() in 0..3) {
+                                onTouchEvent(xNorm, yNorm, action)
+                            }
                         }
                     }
                     ProtocolOpcode.SESSION_STOP -> {
@@ -222,8 +225,9 @@ class BydProtocolWrapper(
                     else -> Unit
                 }
             }
-            if (!gracefulStop && isActive) {
-                onUnexpectedDisconnect()
+            if (isActive) {
+                mediaStarted = false
+                if (gracefulStop) onSessionStopped() else onUnexpectedDisconnect()
             }
         }
     }

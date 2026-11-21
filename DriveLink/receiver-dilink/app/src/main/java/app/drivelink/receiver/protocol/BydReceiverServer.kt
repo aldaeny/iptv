@@ -103,6 +103,7 @@ class BydReceiverServer(
     }
 
     fun disconnectActiveSession() {
+        _state.value = ReceiverState.WaitingForPhone
         val out = activeClientOut
         val sock = activeClientSocket
         if (out != null) {
@@ -113,7 +114,8 @@ class BydReceiverServer(
 
     fun sendTouchEvent(xNorm: Float, yNorm: Float, action: Byte) {
         val out = activeClientOut ?: return
-        if (!encryptionActive) return
+        if (!encryptionActive || _state.value !is ReceiverState.MirroringActive) return
+        if (!xNorm.isFinite() || !yNorm.isFinite() || action.toInt() !in 0..3) return
         val payload = ByteBuffer.allocate(9)
             .order(ByteOrder.BIG_ENDIAN)
             .putFloat(xNorm.coerceIn(0f, 1f))

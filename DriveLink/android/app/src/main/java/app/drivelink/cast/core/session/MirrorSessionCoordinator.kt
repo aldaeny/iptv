@@ -213,6 +213,7 @@ object MirrorSessionCoordinator {
     }
 
     fun toggleOrientation() {
+        app.drivelink.cast.service.BydTouchAccessibilityService.clearPendingTouch()
         val next = if (_orientation.value == DisplayOrientation.LANDSCAPE) {
             DisplayOrientation.PORTRAIT
         } else {
@@ -263,10 +264,12 @@ object MirrorSessionCoordinator {
                 _telemetry.value = _telemetry.value.copy(rttMs = rtt)
             },
             onTouchEvent = { xNorm, yNorm, action ->
-                if (app.drivelink.cast.BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+                if (app.drivelink.cast.BuildConfig.ENABLE_OVERLAY_AND_TOUCH &&
+                    !userInitiatedDisconnect && _connectionState.value is ConnectionState.Streaming) {
                     app.drivelink.cast.service.BydTouchAccessibilityService.dispatchNormalizedTouch(xNorm, yNorm, action)
                 }
             },
+            onSessionStopped = { scope.launch { disconnect() } },
             onUnexpectedDisconnect = {
                 handleUnexpectedDrop()
             }
@@ -282,6 +285,7 @@ object MirrorSessionCoordinator {
     }
 
     private fun handleUnexpectedDrop() {
+        app.drivelink.cast.service.BydTouchAccessibilityService.clearPendingTouch()
         val device = lastConnectedDevice ?: return
         val ctx = appContext ?: return
         if (userInitiatedDisconnect || !TrustedVehiclesStore(ctx).isTrusted(device.id)) {
@@ -315,6 +319,7 @@ object MirrorSessionCoordinator {
 
     suspend fun disconnect() {
         userInitiatedDisconnect = true
+        app.drivelink.cast.service.BydTouchAccessibilityService.clearPendingTouch()
         reconnectJob?.cancel()
         reconnectJob = null
         pingJob?.cancel()

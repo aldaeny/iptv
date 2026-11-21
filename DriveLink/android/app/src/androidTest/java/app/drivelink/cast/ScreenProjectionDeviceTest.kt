@@ -1,6 +1,10 @@
 package app.drivelink.cast
 
 import android.Manifest
+import android.app.UiAutomation
+import android.view.MotionEvent
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.media.Image
@@ -35,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -104,6 +109,67 @@ class ScreenProjectionDeviceTest {
         }
     }
 
+    @Test
+    fun fullTouchExecutesEncryptedGesturesOnThePhone() = runBlocking<Unit> {
+        assumeTrue(BuildConfig.ENABLE_OVERLAY_AND_TOUCH)
+        Fixture().use { f ->
+            f.startSession(Color.RED)
+            f.expectPixels(320, 240, RED)
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                automation.executeShellCommand(command)
+            ).use { it.readBytes() }
+            val component = "${instrumentation.targetContext.packageName}/app.drivelink.cast.service.BydTouchAccessibilityService"
+            try {
+                shell("settings put secure enabled_accessibility_services $component")
+                shell("settings put secure accessibility_enabled 1")
+                val events = LinkedBlockingQueue<ObservedTouch>()
+                f.observeTouches(events)
+                val touch = f.receiver::sendTouchEvent
+                // Service binding is asynchronous; retry an isolated tap until observed.
+                withTimeout(8_000) {
+                    while (events.isEmpty()) {
+                        touch(.5f, .5f, 0); touch(.5f, .5f, 1)
+                        delay(500)
+                    }
+                }
+                events.clear()
+                fun up(): ObservedTouch {
+                    val end = SystemClock.uptimeMillis() + 4_000
+                    while (SystemClock.uptimeMillis() < end) {
+                        val event = events.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                        if (event.action == MotionEvent.ACTION_UP) return event
+                    }
+                    throw AssertionError("No injected ACTION_UP reached the phone")
+                }
+                touch(.4f, .5f, 0); touch(.4f, .5f, 1)
+                touch(.4f, .5f, 0); touch(.4f, .5f, 1)
+                repeat(2) { assertTrue(kotlin.math.abs(up().x - .4f) < .04f) }
+                touch(.5f, .5f, 0); delay(700); touch(.5f, .5f, 1)
+                assertTrue("Long press duration not preserved", up().duration >= 500)
+                for ((x, y) in listOf(.25f to .5f, .75f to .5f, .5f to .25f, .5f to .75f)) {
+                    touch(.5f, .5f, 0); delay(120); touch(x, y, 2); touch(x, y, 1)
+                    val end = up()
+                    assertTrue("Swipe endpoint mismatch: $end", kotlin.math.abs(end.x - x) < .04f && kotlin.math.abs(end.y - y) < .04f)
+                }
+                touch(.5f, .5f, 0); touch(.5f, .5f, 3); touch(.5f, .5f, 1)
+                delay(250)
+                assertTrue("Cancelled or orphan gesture was injected", events.isEmpty())
+                touch(.5f, .5f, 0)
+                f.stopSession()
+                touch(.5f, .5f, 1)
+                delay(250)
+                assertTrue("Touch was injected after session stop", events.isEmpty())
+            } finally {
+                shell("settings delete secure enabled_accessibility_services")
+                shell("settings delete secure accessibility_enabled")
+            }
+        }
+    }
+
+    private data class ObservedTouch(val action: Int, val x: Float, val y: Float, val duration: Long)
+
     private class Fixture : AutoCloseable {
         private val instrumentation = InstrumentationRegistry.getInstrumentation()
         private val context = instrumentation.targetContext
@@ -148,6 +214,18 @@ class ScreenProjectionDeviceTest {
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             }
             instrumentation.waitForIdleSync()
+        }
+
+        fun observeTouches(events: LinkedBlockingQueue<ObservedTouch>) {
+            scenario.onActivity { activity ->
+                val view = activity.findViewById<View>(android.R.id.content).findViewWithTag<View>("projection-pattern")
+                view.setOnTouchListener { _, event ->
+                    val bounds = activity.windowManager.maximumWindowMetrics.bounds
+                    events.add(ObservedTouch(event.actionMasked, event.rawX / bounds.width(),
+                        event.rawY / bounds.height(), event.eventTime - event.downTime))
+                    true
+                }
+            }
         }
 
         suspend fun startSession(color: Int) {
