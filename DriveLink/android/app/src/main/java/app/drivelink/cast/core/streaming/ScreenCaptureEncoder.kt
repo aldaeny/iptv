@@ -35,7 +35,6 @@ class ScreenCaptureEncoder(
     private var inputSurface: Surface? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var drainJob: Job? = null
-    private var codecConfigNalu: ByteArray? = null
     private var callbackRegistered = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -45,8 +44,21 @@ class ScreenCaptureEncoder(
         }
     }
 
+    @Synchronized
     fun start(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int) {
-        stop()
+        try {
+            configureCapture(profile, orientation, densityDpi)
+        } catch (error: Exception) {
+            releaseProjection()
+            throw error
+        }
+    }
+
+    private fun configureCapture(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int) {
+        // API 34 allows only one createVirtualDisplay call per projection token.
+        // Detach the old encoder before releasing it, but retain the display.
+        virtualDisplay?.setSurface(null)
+        releaseEncoder()
         if (!callbackRegistered) {
             mediaProjection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
             callbackRegistered = true
@@ -106,26 +118,30 @@ class ScreenCaptureEncoder(
             runCatching { encoder.release() }
             throw error
         }
+        codec = encoder
+        inputSurface = surface
         // Announced only once the encoder is actually running, so a codec that fails to start
         // can never move the session profile away from the codec that is really in use.
         if (selectedMime != requestedMime) {
             onCodecFallback(selectedMime)
         }
 
-        val display = mediaProjection.createVirtualDisplay(
-            "BYD-Wireless-Display",
-            width,
-            height,
-            densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            surface,
-            null,
-            null
-        )
-
-        codec = encoder
-        inputSurface = surface
-        virtualDisplay = display
+        val display = virtualDisplay
+        if (display == null) {
+            virtualDisplay = checkNotNull(mediaProjection.createVirtualDisplay(
+                "BYD-Wireless-Display",
+                width,
+                height,
+                densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                surface,
+                null,
+                null
+            )) { "Screen capture display unavailable" }
+        } else {
+            display.resize(width, height, densityDpi)
+            display.setSurface(surface)
+        }
 
         drainJob = scope.launch(Dispatchers.Default) {
             var codecConfigNalu: ByteArray? = null
@@ -178,11 +194,16 @@ class ScreenCaptureEncoder(
         runCatching { codec?.setParameters(params) }
     }
 
+    @Synchronized
     fun stop() {
-        drainJob?.cancel()
-        drainJob = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
+        releaseEncoder()
+    }
+
+    private fun releaseEncoder() {
+        drainJob?.cancel()
+        drainJob = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         codec = null
@@ -190,6 +211,7 @@ class ScreenCaptureEncoder(
         inputSurface = null
     }
 
+    @Synchronized
     fun releaseProjection() {
         stop()
         if (callbackRegistered) {
