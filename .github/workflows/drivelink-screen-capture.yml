@@ -45,7 +45,8 @@ jobs:
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           "$tools/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
           cd DriveLink/android
-          ./gradlew --no-daemon --stacktrace ":app:assemble${variant}Debug" ":app:assemble${variant}DebugAndroidTest"
+          ./gradlew --no-daemon --stacktrace ":app:assemble${variant}Debug" ":app:assemble${variant}DebugAndroidTest" \
+            ":app:test${variant}DebugUnitTest" --tests app.drivelink.cast.QualityNegotiatorTest
       - name: Run actual consent, capture, rotation and new-session tests on Android 14
         timeout-minutes: 18
         env:

@@ -35,15 +35,15 @@ class QualityNegotiator {
             ThermalLevel.NOMINAL -> current.targetFps
             ThermalLevel.MODERATE -> minOf(current.targetFps, 45)
             ThermalLevel.SEVERE -> minOf(current.targetFps, 30)
-            ThermalLevel.CRITICAL -> 24
+            ThermalLevel.CRITICAL -> minOf(current.targetFps, 24)
         }
 
         val networkStepDown = telemetry.rttMs > 70 || telemetry.packetLossPercent > 2.5f
         val networkHealthy = telemetry.rttMs in 1..35 && telemetry.packetLossPercent < 0.3f
 
         val adjustedBitrate = when {
-            telemetry.thermalLevel >= ThermalLevel.SEVERE -> maxOf(4, current.bitrateMbps - 4)
-            networkStepDown -> maxOf(4, (current.bitrateMbps * 0.75f).toInt())
+            telemetry.thermalLevel >= ThermalLevel.SEVERE -> minOf(current.bitrateMbps, maxOf(4, current.bitrateMbps - 4))
+            networkStepDown -> minOf(current.bitrateMbps, maxOf(4, (current.bitrateMbps * 0.75f).toInt()))
             networkHealthy && telemetry.thermalLevel == ThermalLevel.NOMINAL ->
                 minOf(16, current.bitrateMbps + 2)
             else -> current.bitrateMbps
@@ -52,7 +52,7 @@ class QualityNegotiator {
         val (width, height) = if (telemetry.thermalLevel == ThermalLevel.CRITICAL ||
             (networkStepDown && telemetry.packetLossPercent > 5.0f)
         ) {
-            1280 to 720
+            minOf(current.baseWidth, 1280) to minOf(current.baseHeight, 720)
         } else {
             current.baseWidth to current.baseHeight
         }
