@@ -251,10 +251,16 @@ jobs:
           if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
+          # Use the debug receiver for instrumentation, never a distribution-signed APK.
+          if [[ $DRIVELINK_RELEASE_SIGNABLE != true ]]; then
+            (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest) \
+              |& tee "$RUNNER_TEMP/receiver-device-test.log"
+          fi
       - name: Collect build logs
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/drivelink-logs"
+          [[ ! -f "$RUNNER_TEMP/receiver-device-test.log" ]] || cp "$RUNNER_TEMP/receiver-device-test.log" "$RUNNER_TEMP/drivelink-logs"
           [[ ! -f "$RUNNER_TEMP/emulator.log" ]] || cp "$RUNNER_TEMP/emulator.log" "$RUNNER_TEMP/drivelink-logs"
           find "$RUNNER_TEMP"/drivelink-{release,unsigned,debug} -maxdepth 1 \( -name "*-AndroidManifest.xml" -o -name "SIGNING_REPORT.md" -o -name "SHA256SUMS.txt" \) -exec cp --parents {} "$RUNNER_TEMP/drivelink-logs" \; 2>/dev/null || true
           shopt -s globstar nullglob
