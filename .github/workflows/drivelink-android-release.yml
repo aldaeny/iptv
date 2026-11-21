@@ -269,6 +269,9 @@ jobs:
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
           # Use the debug receiver for instrumentation, never a distribution-signed APK.
           if [[ $DRIVELINK_RELEASE_SIGNABLE != true ]]; then
+            # This AVD is created above and disposable. The verified smoke APK
+            # was signed with a different key than the Gradle test target.
+            adb uninstall app.drivelink.receiver
             (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest) \
               |& tee "$RUNNER_TEMP/receiver-device-test.log" || {
                 grep -E 'FAILED|Exception|Caused by:|INSTRUMENTATION_|No decoded frame' "$RUNNER_TEMP/receiver-device-test.log" | head -25 | while IFS= read -r line; do
