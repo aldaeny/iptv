@@ -3,11 +3,12 @@ package app.drivelink.cast.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.os.Build
+import android.graphics.Point
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.WindowManager
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import java.util.concurrent.atomic.AtomicLong
 
@@ -58,18 +59,20 @@ class BydTouchAccessibilityService : AccessibilityService() {
     private fun dispatchNext() {
         if (dispatching || generation != sessionEpoch.get()) return
         val gesture = pending.removeFirstOrNull() ?: return
-        val metrics = resources.displayMetrics
-        val bounds = if (Build.VERSION.SDK_INT >= 30) {
-            getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds
-        } else null
-        val width = bounds?.width() ?: metrics.widthPixels
-        val height = bounds?.height() ?: metrics.heightPixels
+        // Accessibility injection targets the physical default display, not the
+        // service's window metrics (which can remain in the old orientation).
+        val size = Point()
+        val display = getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
+        @Suppress("DEPRECATION")
+        display?.getRealSize(size)
+        val width = size.x
+        val height = size.y
         if (width <= 0 || height <= 0) { pending.clear(); return }
         val path = Path()
         gesture.points.forEachIndexed { index, point ->
             val pixel = point.pixels(width, height)
-            val x = pixel.x + (bounds?.left ?: 0)
-            val y = pixel.y + (bounds?.top ?: 0)
+            val x = pixel.x
+            val y = pixel.y
             if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
         dispatching = true
