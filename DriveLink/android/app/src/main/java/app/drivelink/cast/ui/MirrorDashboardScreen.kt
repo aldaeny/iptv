@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.drivelink.cast.core.model.ConnectionState
@@ -49,7 +50,7 @@ fun MirrorDashboardScreen(
 
     var currentTab by remember { mutableStateOf(MirrorTab.HOME) }
     var showActiveMirrorScreen by remember { mutableStateOf(false) }
-    var captureRequestedForSession by remember { mutableStateOf(false) }
+    var captureRequestedForSession by rememberSaveable { mutableStateOf(false) }
     var showManualIpDialog by remember { mutableStateOf(false) }
 
     // Trigger MediaProjection cleanly when streaming begins (non-Miracast)

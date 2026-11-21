@@ -174,7 +174,17 @@ class ScreenProjectionDeviceTest {
             val consent = device.wait(Until.findObject(By.res("com.android.systemui", "start_now")), 15_000)
                 ?: device.wait(Until.findObject(By.text("Start now")), 5_000)
                 ?: throw AssertionError("No Android MediaProjection consent dialog; no screen capture was verified")
-            consent.click()
+            // Android 14 QPR builds can default to sharing a single app. Test the
+            // entire display to avoid the app picker and exercise display rotation.
+            val scopeSelector = device.findObject(By.res("com.android.systemui", "screen_share_mode_spinner"))
+            if (scopeSelector != null) {
+                scopeSelector.click()
+                val entireScreen = device.wait(Until.findObject(By.text("Share entire screen")), 3_000)
+                    ?: device.wait(Until.findObject(By.text("Entire screen")), 3_000)
+                    ?: throw AssertionError("Entire-screen sharing option unavailable")
+                entireScreen.click()
+            }
+            (device.findObject(By.res("com.android.systemui", "start_now")) ?: consent).click()
             consents++
             withTimeout(15_000) {
                 while (MirrorSessionCoordinator.onReconfigureEncoder == null) delay(50)
