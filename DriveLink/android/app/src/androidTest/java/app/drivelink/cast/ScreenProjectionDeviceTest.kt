@@ -126,7 +126,7 @@ class ScreenProjectionDeviceTest {
                 shell("settings put secure accessibility_enabled 1")
                 val events = LinkedBlockingQueue<ObservedTouch>()
                 f.observeTouches(events)
-                val touch = f.receiver::sendTouchEvent
+                val touch: (Float, Float, Byte) -> Unit = { x, y, action -> f.receiver.sendTouchEvent(x, y, action) }
                 // Service binding is asynchronous; retry an isolated tap until observed.
                 withTimeout(8_000) {
                     while (events.none { it.action == MotionEvent.ACTION_UP }) {

@@ -112,8 +112,11 @@ class BydReceiverServer(
         runCatching { sock?.close() }
     }
 
-    fun sendTouchEvent(xNorm: Float, yNorm: Float, action: Byte) {
+    fun touchSessionToken(): Any? = activeClientOut.takeIf { _state.value is ReceiverState.MirroringActive }
+
+    fun sendTouchEvent(xNorm: Float, yNorm: Float, action: Byte, sessionToken: Any? = touchSessionToken()) {
         val out = activeClientOut ?: return
+        if (out !== sessionToken) return
         if (!encryptionActive || _state.value !is ReceiverState.MirroringActive) return
         if (!xNorm.isFinite() || !yNorm.isFinite() || action.toInt() !in 0..3) return
         val payload = ByteBuffer.allocate(9)
