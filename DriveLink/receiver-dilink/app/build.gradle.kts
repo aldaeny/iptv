@@ -18,6 +18,13 @@ android {
         versionName = "1.4.1"
     }
 
+    // Exercise the real phone transport without packaging it in the receiver APK.
+    sourceSets.getByName("androidTest").java.srcDirs(
+        "../../android/app/src/main/java/app/drivelink/cast/core/model",
+        "../../android/app/src/main/java/app/drivelink/cast/core/protocol",
+        "../../android/app/src/main/java/app/drivelink/cast/core/security"
+    )
+
     signingConfigs {
         // The implicit debug signing config already exists; only its v1/v2 flags are tuned.
         // ("getByName" is not a valid `signingConfigs` member in AGP 8 Kotlin DSL.)
