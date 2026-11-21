@@ -44,9 +44,14 @@ jobs:
           echo "VARIANT=$variant" >> "$GITHUB_ENV"
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           "$tools/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          mkdir -p "$RUNNER_TEMP/projection-logs"
           cd DriveLink/android
           ./gradlew --no-daemon --stacktrace ":app:assemble${variant}Debug" ":app:assemble${variant}DebugAndroidTest" \
-            ":app:test${variant}DebugUnitTest" --tests app.drivelink.cast.QualityNegotiatorTest --tests app.drivelink.cast.ReverseTouchGestureTest
+            ":app:test${variant}DebugUnitTest" --tests app.drivelink.cast.QualityNegotiatorTest --tests app.drivelink.cast.ReverseTouchGestureTest \
+            |& tee "$RUNNER_TEMP/projection-logs/compile.txt" || {
+              python3 ../ci/annotate_errors.py "$RUNNER_TEMP/projection-logs/compile.txt"
+              exit 1
+            }
       - name: Run actual consent, capture, rotation and new-session tests on Android 14
         timeout-minutes: 18
         env:
