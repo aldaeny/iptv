@@ -93,5 +93,6 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.security:security-crypto:1.1.0-alpha06")
     androidTestImplementation("junit:junit:4.13.2")
 }

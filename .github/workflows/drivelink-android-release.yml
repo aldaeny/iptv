@@ -217,7 +217,13 @@ jobs:
           bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
       - name: Compile receiver emulator tests
         if: github.event_name == 'workflow_dispatch'
-        run: cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest
+        run: |
+          set -eo pipefail
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest) \
+            |& tee "$RUNNER_TEMP/receiver-test-compile.log" || {
+              python3 DriveLink/ci/annotate_errors.py "$RUNNER_TEMP/receiver-test-compile.log"
+              exit 1
+            }
       - name: Grant the Android runner access to KVM
         if: github.event_name == 'workflow_dispatch'
         run: |
