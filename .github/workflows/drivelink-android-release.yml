@@ -215,8 +215,23 @@ jobs:
           (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardDebug :app:assembleFullTouchDebug)
           (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
           bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
+      - name: Compile receiver emulator tests
+        if: github.event_name == 'workflow_dispatch'
+        run: cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest
+      - name: Grant the Android runner access to KVM
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          if [[ ! -c /dev/kvm ]]; then
+            echo '::error::This runner does not expose /dev/kvm; receiver runtime tests did not run.'
+            exit 1
+          fi
+          sudo chgrp "$(id -gn)" /dev/kvm
+          sudo chmod g+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
       - name: Smoke test release-signed APKs, or separately labelled debug APKs if unsigned
         if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 18
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -233,18 +248,13 @@ jobs:
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           adb start-server
           adb devices -l
-          args=()
-          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
-            # Recent emulators require explicit opt-in for the software fallback.
-            export ANDROID_I_WANT_MY_TCG=yes
-            args+=(-accel off)
-          fi
-          "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -skin 480x800 -no-boot-anim -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          "$ANDROID_HOME/emulator/emulator" -accel on -avd drivelink-test -port 5554 -skin 480x800 -no-boot-anim -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
-          deadline=$((SECONDS + 900))
+          deadline=$((SECONDS + 300))
           until [[ $(timeout 8s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
-            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then echo "::error::Emulator exited or boot deadline reached; KVM fallback=${args[*]:-none}"; tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then echo "::error::Emulator exited or boot deadline reached; hardware acceleration required"; tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
             sleep 3
           done
           dir="$RUNNER_TEMP/drivelink-debug"
