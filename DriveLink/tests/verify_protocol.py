@@ -81,7 +81,8 @@ def main():
     kt_fg = (ROOT / "android/app/src/main/java/app/drivelink/cast/service/MirrorForegroundService.kt").read_text()
     assert "Activity.RESULT_OK" in kt_fg and "resultCode != -1" not in kt_fg, "MirrorForegroundService MediaProjection resultCode regression"
     kt_acc = (ROOT / "android/app/src/main/java/app/drivelink/cast/service/BydTouchAccessibilityService.kt").read_text()
-    assert "mainHandler.post" in kt_acc and "MAX_MOVE_POINTS" in kt_acc, "Accessibility touch thread-safety guard missing"
+    kt_gesture = (ROOT / "android/app/src/main/java/app/drivelink/cast/service/ReverseTouchGesture.kt").read_text()
+    assert "mainHandler.post" in kt_acc and "MAX_MOVE_POINTS" in kt_gesture, "Accessibility touch thread and path bounds guards missing"
     kt_p2p = (ROOT / "android/app/src/main/java/app/drivelink/cast/core/network/WifiP2pTransport.kt").read_text()
     assert "ContextCompat.registerReceiver" in kt_p2p, "WifiP2pTransport missing Android 14+ ContextCompat.registerReceiver flag"
     kt_manifest = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text()

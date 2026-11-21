@@ -97,7 +97,7 @@ object MirrorSessionCoordinator {
     private var lastConnectedDevice: BydDevice? = null
     private var appContext: Context? = null
     @Volatile
-    private var userInitiatedDisconnect = false
+    @Volatile private var userInitiatedDisconnect = false
 
     fun markDiscovering() {
         if (_connectionState.value is ConnectionState.Idle || _connectionState.value is ConnectionState.Error) {

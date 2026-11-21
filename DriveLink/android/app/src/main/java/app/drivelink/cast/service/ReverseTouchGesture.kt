@@ -10,6 +10,8 @@ internal class ReverseTouchGesture {
     private val points = mutableListOf<TouchPoint>()
     private var startedAt = 0L
 
+    private companion object { const val MAX_MOVE_POINTS = 128 }
+
     fun reset() = points.clear()
 
     fun accept(x: Float, y: Float, action: Byte, now: Long): ReverseGesture? {
@@ -22,7 +24,7 @@ internal class ReverseTouchGesture {
         if (points.isNotEmpty() && now - startedAt > 3_000L) reset()
         when (action.toInt()) {
             0 -> { reset(); startedAt = now; points.add(point) }
-            2 -> if (points.isNotEmpty() && points.size < 128 && point != points.last()) points.add(point)
+            2 -> if (points.isNotEmpty() && points.size < MAX_MOVE_POINTS && point != points.last()) points.add(point)
             1 -> if (points.isNotEmpty()) {
                 if (point != points.last()) points.add(point)
                 return ReverseGesture(points.toList(), (now - startedAt).coerceIn(45L, 1_500L)).also { reset() }
