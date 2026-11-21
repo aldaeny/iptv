@@ -19,6 +19,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Compile the actual receiver only into instrumentation, never into phone release APKs.
+    sourceSets.getByName("androidTest").java.srcDirs(
+        "../../receiver-dilink/app/src/main/java/app/drivelink/receiver/crypto",
+        "../../receiver-dilink/app/src/main/java/app/drivelink/receiver/decoder",
+        "../../receiver-dilink/app/src/main/java/app/drivelink/receiver/protocol"
+    )
+
     signingConfigs {
         // The implicit debug signing config already exists; only its v1/v2 flags are tuned.
         // ("getByName" is not a valid `signingConfigs` member in AGP 8 Kotlin DSL.)
@@ -122,5 +129,10 @@ dependencies {
     // for Service lifecycle and cleanup paths that plain JUnit cannot touch.
     // 4.14.1 supports AGP 8.7 / SDK 34-35 / JDK 17.
     testImplementation("org.robolectric:robolectric:4.14.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

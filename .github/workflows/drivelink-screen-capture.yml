@@ -1,0 +1,98 @@
+name: DriveLink real screen capture (no distribution)
+
+on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - "DriveLink/android/**"
+      - "DriveLink/receiver-dilink/**"
+      - ".github/workflows/drivelink-screen-capture.yml"
+  pull_request:
+    paths:
+      - "DriveLink/android/**"
+      - "DriveLink/receiver-dilink/**"
+      - ".github/workflows/drivelink-screen-capture.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  projection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standard, fullTouch]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+        with:
+          gradle-version: "8.10.2"
+      - name: Compile real projection tests (debug only)
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in standard) variant=Standard;; fullTouch) variant=FullTouch;; *) exit 1;; esac
+          echo "VARIANT=$variant" >> "$GITHUB_ENV"
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          "$tools/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          cd DriveLink/android
+          ./gradlew --no-daemon --stacktrace ":app:assemble${variant}Debug" ":app:assemble${variant}DebugAndroidTest"
+      - name: Run actual consent, capture, rotation and new-session tests on Android 14
+        timeout-minutes: 18
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/projection-logs"
+          test -c /dev/kvm
+          sudo chgrp "$(id -gn)" /dev/kvm
+          sudo chmod g+rw /dev/kvm
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image='system-images;android-34;google_apis;x86_64'
+          "$tools/sdkmanager" emulator "$image"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/projection-android"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd -n projection -k "$image"
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -accel on -avd projection -port 5554 -skin 480x800 -no-boot-anim -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/projection-logs/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'adb logcat -d > "$RUNNER_TEMP/projection-logs/logcat.txt" 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
+          deadline=$((SECONDS + 300))
+          until [[ $(timeout 8s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then
+              tail -60 "$RUNNER_TEMP/projection-logs/emulator.log"
+              exit 1
+            fi
+            sleep 3
+          done
+          adb shell input keyevent 82
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb logcat -c
+          cd DriveLink/android
+          ./gradlew --no-daemon --stacktrace ":app:connected${VARIANT}DebugAndroidTest" \
+            -Pandroid.testInstrumentationRunnerArguments.class=app.drivelink.cast.ScreenProjectionDeviceTest \
+            2>&1 | tee "$RUNNER_TEMP/projection-logs/test.txt"
+      - name: Archive actual test results and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: real-projection-api34-${{ matrix.mode }}-${{ github.sha }}
+          path: |
+            DriveLink/android/app/build/outputs/androidTest-results/
+            DriveLink/android/app/build/reports/androidTests/
+            ${{ runner.temp }}/projection-logs/
+          if-no-files-found: warn
+          retention-days: 30
