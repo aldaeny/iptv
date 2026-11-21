@@ -26,7 +26,7 @@ import java.net.ConnectException
 class ReceiverStreamDeviceTest {
     @Test
     fun encryptedPhoneStreamRendersAfterDisconnectAndReconnect() = runBlocking<Unit> {
-        val frame = InstrumentationRegistry.getInstrumentation().context.assets
+        val fixture = InstrumentationRegistry.getInstrumentation().context.assets
             .open("blue-idr.h264").use { it.readBytes() }
         val callbacks = HandlerThread("stream-frame-callbacks").apply { start() }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -36,7 +36,8 @@ class ReceiverStreamDeviceTest {
         val profile = DisplayProfile.DILINK_12_8_FHD.copy(baseWidth = 320, baseHeight = 240, targetFps = 30)
         try {
             receiver.start(scope)
-            repeat(2) {
+            repeat(2) { round ->
+                val frame = if (round == 0) fixture else encodeLiveAvcFrame(320, 240)
                 val texture = SurfaceTexture(false)
                 val surface = Surface(texture)
                 val rendered = CompletableDeferred<Unit>()
