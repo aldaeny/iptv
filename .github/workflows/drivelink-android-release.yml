@@ -270,7 +270,15 @@ jobs:
           # Use the debug receiver for instrumentation, never a distribution-signed APK.
           if [[ $DRIVELINK_RELEASE_SIGNABLE != true ]]; then
             (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest) \
-              |& tee "$RUNNER_TEMP/receiver-device-test.log"
+              |& tee "$RUNNER_TEMP/receiver-device-test.log" || {
+                grep -E 'FAILED|Exception|Caused by:|INSTRUMENTATION_|No decoded frame' "$RUNNER_TEMP/receiver-device-test.log" | head -25 | while IFS= read -r line; do
+                  echo "::error::${line//%/%25}"
+                done || true
+                adb logcat -d -t 500 -s AndroidRuntime:E DriveLink:W | tail -35 | while IFS= read -r line; do
+                  echo "::warning::${line//%/%25}"
+                done || true
+                exit 1
+              }
           fi
       - name: Collect build logs
         if: always()
