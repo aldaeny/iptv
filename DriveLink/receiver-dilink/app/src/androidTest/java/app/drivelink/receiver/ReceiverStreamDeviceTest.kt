@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -24,45 +25,55 @@ import java.net.ConnectException
 
 class ReceiverStreamDeviceTest {
     @Test
-    fun encryptedPhoneStreamRendersOnReceiver() = runBlocking<Unit> {
+    fun encryptedPhoneStreamRendersAfterDisconnectAndReconnect() = runBlocking<Unit> {
         val frame = InstrumentationRegistry.getInstrumentation().context.assets
             .open("blue-idr.h264").use { it.readBytes() }
         val callbacks = HandlerThread("stream-frame-callbacks").apply { start() }
-        val texture = SurfaceTexture(false)
-        val surface = Surface(texture)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val rendered = CompletableDeferred<Unit>()
-        val keyframeRequested = CompletableDeferred<Unit>()
         val receiver = BydReceiverServer()
         val phone = BydProtocolWrapper()
         val device = BydDevice("loopback", "Receiver", "Emulator", "5.0", "127.0.0.1")
         val profile = DisplayProfile.DILINK_12_8_FHD.copy(baseWidth = 320, baseHeight = 240, targetFps = 30)
         try {
-            texture.setDefaultBufferSize(320, 240)
-            texture.setOnFrameAvailableListener({ rendered.complete(Unit) }, Handler(callbacks.looper))
-            receiver.attachSurface(surface)
             receiver.start(scope)
-            var handshake = phone.connectAndHandshake(device, profile)
-            repeat(20) {
-                if (handshake.exceptionOrNull() is ConnectException) {
-                    delay(100)
-                    handshake = phone.connectAndHandshake(device, profile)
+            repeat(2) {
+                val texture = SurfaceTexture(false)
+                val surface = Surface(texture)
+                val rendered = CompletableDeferred<Unit>()
+                val keyframeRequested = CompletableDeferred<Unit>()
+                try {
+                    texture.setDefaultBufferSize(320, 240)
+                    texture.setOnFrameAvailableListener({ rendered.complete(Unit) }, Handler(callbacks.looper))
+                    receiver.attachSurface(surface)
+                    var handshake = phone.connectAndHandshake(device, profile)
+                    repeat(20) {
+                        if (handshake.exceptionOrNull() is ConnectException) {
+                            delay(100)
+                            handshake = phone.connectAndHandshake(device, profile)
+                        }
+                    }
+                    val pairing = handshake.getOrThrow()
+                    val receiverPairing = receiver.state.value as ReceiverState.PairingVerification
+                    assertEquals(pairing.pairingPin, receiverPairing.pin)
+                    phone.startMediaSession(profile, pairing.fingerprint)
+                    phone.startControlReadLoop(scope, { keyframeRequested.complete(Unit) }, { _, _ -> }, {})
+                    withTimeout(5_000L) { keyframeRequested.await() }
+                    withTimeout(8_000L) {
+                        var ptsUs = 0
+                        while (!rendered.isCompleted) {
+                            phone.sendVideoFrame(frame, ptsUs)
+                            ptsUs += 33_333
+                            delay(33)
+                        }
+                        rendered.await()
+                    }
+                    phone.disconnect()
+                    withTimeout(5_000L) { receiver.state.first { it == ReceiverState.WaitingForPhone } }
+                } finally {
+                    receiver.attachSurface(null)
+                    surface.release()
+                    texture.release()
                 }
-            }
-            val pairing = handshake.getOrThrow()
-            val receiverPairing = receiver.state.value as ReceiverState.PairingVerification
-            assertEquals(pairing.pairingPin, receiverPairing.pin)
-            phone.startMediaSession(profile, pairing.fingerprint)
-            phone.startControlReadLoop(scope, { keyframeRequested.complete(Unit) }, { _, _ -> }, {})
-            withTimeout(5_000L) { keyframeRequested.await() }
-            withTimeout(8_000L) {
-                var ptsUs = 0
-                while (!rendered.isCompleted) {
-                    phone.sendVideoFrame(frame, ptsUs)
-                    ptsUs += 33_333
-                    delay(33)
-                }
-                rendered.await()
             }
         } finally {
             try {
@@ -70,9 +81,6 @@ class ReceiverStreamDeviceTest {
             } finally {
                 scope.cancel()
                 receiver.stop()
-                receiver.attachSurface(null)
-                surface.release()
-                texture.release()
                 callbacks.quitSafely()
                 callbacks.join()
             }
