@@ -147,31 +147,36 @@ class ScreenCaptureEncoder(
             var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = runCatching { encoder.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrElse {
-                    if (isActive) onProjectionStopped()
-                    return@launch
-                }
-                if (index >= 0) {
-                    val outBuffer = encoder.getOutputBuffer(index)
-                    if (outBuffer != null && bufferInfo.size > 0) {
-                        val nalu = ByteArray(bufferInfo.size)
-                        outBuffer.position(bufferInfo.offset)
-                        outBuffer.get(nalu)
-                        val isConfig = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-                        val isKey = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
-                        if (isConfig) {
-                            codecConfigNalu = nalu
-                            runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
-                        } else if (isKey && codecConfigNalu != null) {
-                            // Smart cast: codecConfigNalu is non-null here due to the check above
-                            val combined = codecConfigNalu + nalu
-                            runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
-                        } else {
-                            runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
+                val nalu = runCatching {
+                    // Copy the native buffer under the same lock used by stop/reconfigure;
+                    // never retain a codec buffer across a suspending network send.
+                    synchronized(this@ScreenCaptureEncoder) {
+                        if (!isActive || codec !== encoder) return@launch
+                        val index = encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
+                        if (index < 0) null else try {
+                            encoder.getOutputBuffer(index)?.takeIf { bufferInfo.size > 0 }?.let { buffer ->
+                                ByteArray(bufferInfo.size).also {
+                                    buffer.position(bufferInfo.offset)
+                                    buffer.get(it)
+                                }
+                            }
+                        } finally {
+                            encoder.releaseOutputBuffer(index, false)
                         }
                     }
-                    runCatching { encoder.releaseOutputBuffer(index, false) }
+                }.getOrElse {
+                    if (isActive) onProjectionStopped()
+                    return@launch
+                } ?: continue
+                if (!isActive) return@launch
+                val isConfig = bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                val isKey = bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+                val payload = when {
+                    isConfig -> nalu.also { codecConfigNalu = it }
+                    isKey -> codecConfigNalu?.plus(nalu) ?: nalu
+                    else -> nalu
                 }
+                runCatching { onEncodedNalu(payload, bufferInfo.presentationTimeUs.toInt()) }
             }
         }
     }
