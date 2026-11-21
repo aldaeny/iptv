@@ -59,6 +59,7 @@ class BydReceiverServer(
     private var activeClientSocket: Socket? = null
     @Volatile
     private var activeClientOut: DataOutputStream? = null
+    @Volatile
     private var targetSurface: Surface? = null
     private var serverJob: Job? = null
     private var clientJob: Job? = null
@@ -83,8 +84,12 @@ class BydReceiverServer(
 
     fun attachSurface(surface: Surface?) {
         targetSurface = surface
+        if (surface == null) {
+            decoder.releaseVideo()
+            return
+        }
         val mime = activeMime
-        if (surface != null && mime != null) {
+        if (mime != null) {
             val w = if (activeLandscape) maxOf(activeBaseWidth, activeBaseHeight) else minOf(activeBaseWidth, activeBaseHeight)
             val h = if (activeLandscape) minOf(activeBaseWidth, activeBaseHeight) else maxOf(activeBaseWidth, activeBaseHeight)
             decoder.configureVideo(surface, w, h, mime)

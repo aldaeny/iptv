@@ -6,6 +6,7 @@ import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 
@@ -16,6 +17,9 @@ import java.nio.ByteBuffer
 class VideoAudioDecoder {
 
     private var videoCodec: MediaCodec? = null
+    private data class VideoTarget(val surface: Surface, val width: Int, val height: Int, val mime: String)
+
+    private var videoTarget: VideoTarget? = null
     private var audioCodec: MediaCodec? = null
     private var audioTrack: AudioTrack? = null
     private var currentMime: String = MediaFormat.MIMETYPE_VIDEO_AVC
@@ -33,28 +37,30 @@ class VideoAudioDecoder {
 
     @Synchronized
     fun configureVideo(surface: Surface, width: Int, height: Int, mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC) {
+        if (!surface.isValid) {
+            releaseVideo()
+            return
+        }
+        val target = VideoTarget(surface, width, height, mimeType)
+        if (videoCodec != null && videoTarget == target) return
         releaseVideo()
-        firstVideoPtsUs = -1L
-        videoPlaybackStartNs = -1L
-        currentMime = mimeType
 
-        val targetMime = if (mimeType == MediaFormat.MIMETYPE_VIDEO_HEVC && !supportsHevcDecoder()) {
-            MediaFormat.MIMETYPE_VIDEO_AVC
-        } else {
-            mimeType
-        }
-        currentMime = targetMime
-
-        val format = MediaFormat.createVideoFormat(targetMime, width, height).apply {
-            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 1024 * 1024)
-        }
+        // The decoder must match the incoming bitstream. A local MIME substitution
+        // cannot turn an HEVC stream into AVC.
         runCatching {
-            videoCodec = MediaCodec.createDecoderByType(targetMime)
-            videoCodec!!.apply {
-                configure(format, surface, null, 0)
-                start()
+            val format = MediaFormat.createVideoFormat(mimeType, width, height).apply {
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 1024 * 1024)
             }
-        }.onFailure { releaseVideo() }
+            val codec = MediaCodec.createDecoderByType(mimeType)
+            videoCodec = codec
+            codec.configure(format, surface, null, 0)
+            codec.start()
+            currentMime = mimeType
+            videoTarget = target
+        }.onFailure {
+            Log.w("DriveLink", "Video decoder setup failed: $mimeType ${width}x$height", it)
+            releaseVideo()
+        }
     }
 
     @Synchronized
@@ -177,6 +183,7 @@ class VideoAudioDecoder {
 
     @Synchronized
     fun releaseVideo() {
+        videoTarget = null
         firstVideoPtsUs = -1L
         videoPlaybackStartNs = -1L
         runCatching { videoCodec?.stop() }
