@@ -200,6 +200,14 @@ final class SampleHandler: RPBroadcastSampleHandler {
         case .keyExchangeResp:
             if let fingerprint = try? protocolWrapper.completeKeyExchange(responsePayload: packet.payload) {
                 sessionFingerprint = fingerprint
+                if let proof = DeviceIdentityManager.shared.createProof(sessionFingerprint: fingerprint),
+                   let identityFrame = try? protocolWrapper.encodeFrame(
+                       opcode: .deviceIdentity,
+                       rawPayload: proof,
+                       encrypt: true
+                   ) {
+                    transport.sendControl(identityFrame)
+                }
                 let capPayload = Data("\(activeProfile.id)|\(activeProfile.baseWidth)x\(activeProfile.baseHeight)@\(activeProfile.targetFps)".utf8)
                 if let capReq = try? protocolWrapper.encodeFrame(
                     opcode: .capabilitiesReq,

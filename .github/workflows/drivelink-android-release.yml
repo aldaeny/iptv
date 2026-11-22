@@ -85,6 +85,7 @@ jobs:
           python3 DriveLink/tests/verify_isolation.py
           python3 DriveLink/tests/verify_protocol.py
           python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
           node DriveLink/tests/crypto_fuzz_suite.mjs
       - name: Simulator UI wiring (real index.html, DOM/WebSocket stub)
         run: node DriveLink/tests/simulator_ui_wiring.mjs
@@ -120,7 +121,7 @@ jobs:
     # about the Android build (this gap let a non-compiling tree reach master).
     # Signing inputs stay workflow_dispatch-only, so a push run yields unsigned
     # diagnostic artifacts and can never publish.
-    if: github.event_name != 'push' || github.ref == 'refs/heads/master'
+    if: github.event_name != 'push' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/arena/')
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -186,6 +187,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check pyyaml
           python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
       - name: Assemble release variants, unit tests and lint for both projects
         run: |
           set -euo pipefail
@@ -326,7 +328,8 @@ jobs:
           exit 1
 
   ios:
-    if: github.event_name == 'workflow_dispatch'
+    # Unsigned IPA build on every push; signing/upload below stays dispatch-only.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     needs: verify
     runs-on: macos-15-intel
     timeout-minutes: 60
@@ -410,6 +413,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Sign, export and verify both iOS distribution IPAs
+        if: github.event_name == 'workflow_dispatch'
         env:
           DRIVELINK_APPLE_TEAM_ID: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
           DRIVELINK_IOS_SIGNER_SHA256: ${{ vars.DRIVELINK_IOS_SIGNER_SHA256 }}
@@ -422,6 +426,7 @@ jobs:
           DRIVELINK_IOS_PROFILE_FREE: ${{ secrets.DRIVELINK_IOS_PROFILE_FREE }}
         run: python3 DriveLink/tools/sign-ios.py
       - name: Upload verified distribution IPAs only
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: drivelink-ios-release-${{ github.sha }}

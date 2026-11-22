@@ -76,4 +76,29 @@ final class BydMirrorCoreTests: XCTestCase {
             XCTAssertEqual(decoded.payload[7], 3)
         }
     }
+
+    func testCapabilityRegistryStatesAreExplicit() {
+        XCTAssertEqual(CapabilityState.allCases.count, 8)
+        let registry = CapabilityRegistry()
+        XCTAssertEqual(registry.get(.bydWmpTransport)?.evidence ?? "", CapabilityRegistry.ciBuildEvidence)
+        XCTAssertEqual(registry.get(.reverseTouch)?.state, .unsupported)
+        XCTAssertEqual(registry.get(.carplay)?.state, .unsupported)
+        XCTAssertEqual(registry.get(.androidAuto)?.state, .unsupported)
+        XCTAssertTrue(CapabilityState.available.assertsUsable)
+        XCTAssertFalse(CapabilityState.notVerified.assertsUsable)
+    }
+
+    func testSharedTrustedVehiclesStoreRoundTrip() throws {
+        let suite = "DriveLink.trust." + UUID().uuidString
+        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { prefs.removePersistentDomain(forName: suite) }
+        let store = SharedTrustedVehiclesStore(defaults: prefs)
+        XCTAssertFalse(store.isTrusted(fingerprint: "abc"))
+        store.trust(fingerprint: "abc", displayName: "BYD Phone", nowMs: 1234)
+        XCTAssertTrue(store.isTrusted(fingerprint: "ABC"))
+        XCTAssertEqual(store.all().count, 1)
+        XCTAssertEqual(store.all().first?.pairedAtEpochMs, Int64(1234))
+        store.remove(fingerprint: "ABC")
+        XCTAssertFalse(store.isTrusted(fingerprint: "abc"))
+    }
 }

@@ -1,6 +1,8 @@
 package app.drivelink.cast.core.session
 
 import android.content.Context
+import app.drivelink.cast.core.capability.Capability
+import app.drivelink.cast.core.capability.CapabilityRegistry
 import app.drivelink.cast.core.model.BydDevice
 import app.drivelink.cast.core.model.ConnectionState
 import app.drivelink.cast.core.model.DisplayOrientation
@@ -11,6 +13,7 @@ import app.drivelink.cast.core.model.VideoCodec
 import app.drivelink.cast.core.protocol.BydProtocolWrapper
 import app.drivelink.cast.core.protocol.QualityNegotiator
 import app.drivelink.cast.core.security.TrustedVehicle
+import app.drivelink.cast.core.security.AndroidDeviceIdentity
 import app.drivelink.cast.core.security.TrustedVehiclesStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +42,12 @@ object MirrorSessionCoordinator {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val protocolWrapper = BydProtocolWrapper()
     val qualityNegotiator = QualityNegotiator()
+
+    /** Legal ordering / single-flight gate for the whole app. */
+    val session = SessionStateMachine()
+
+    /** Static capability truth for this build; UI renders exactly these states. */
+    val capabilities: List<Capability> = CapabilityRegistry.forThisBuild()
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -100,12 +109,15 @@ object MirrorSessionCoordinator {
     private var userInitiatedDisconnect = false
 
     fun markDiscovering() {
-        if (_connectionState.value is ConnectionState.Idle || _connectionState.value is ConnectionState.Error) {
+        if (!session.phase.canAcceptNewConnection) return
+        if (session.move(SessionPhase.Discovering, "discovery")) {
             _connectionState.value = ConnectionState.Discovering
         }
     }
 
     fun markMiracastStreaming(device: BydDevice) {
+        session.enterExternalStreaming("miracast")
+        app.drivelink.cast.service.BydTouchAccessibilityService.setInjectionAllowed(false)
         _connectionState.value = ConnectionState.Streaming(
             device = device,
             profile = _activeProfile.value,
@@ -139,21 +151,33 @@ object MirrorSessionCoordinator {
     }
 
     suspend fun connect(context: Context, device: BydDevice) {
+        val phase = session.phase
+        if (!phase.canAcceptNewConnection && phase != SessionPhase.Discovering) return
         appContext = context.applicationContext
+        protocolWrapper.identitySigner = AndroidDeviceIdentity(appContext!!)
         userInitiatedDisconnect = false
         reconnectJob?.cancel()
         lastConnectedDevice = device
+        session.move(SessionPhase.Connecting, "connect")
+        app.drivelink.cast.service.BydTouchAccessibilityService.setInjectionAllowed(false)
 
         _pendingPairing.value = null
         _connectionState.value = ConnectionState.Handshaking(device)
         val base = _profileOverride.value ?: qualityNegotiator.initialProfileFor(device)
         val negotiated = base.copy(codec = _preferredCodec.value)
         _activeProfile.value = negotiated
+        session.move(SessionPhase.Handshaking, "handshake")
+        val generation = session.snapshot.value.generation
 
         _connectionState.value = ConnectionState.KeyExchange(device)
         val result = protocolWrapper.connectAndHandshake(device, negotiated)
+        if (!session.isCurrent(generation)) {
+            protocolWrapper.disconnect()
+            return
+        }
         result.fold(
             onSuccess = { handshake ->
+                session.move(SessionPhase.AwaitingApproval, "awaiting receiver approval")
                 // A discovery ID is not a persistent signing key. Reverify every fresh ECDH session.
                 peerSupportsHevc = handshake.supportsHevc
                 val profile = negotiated.copy(codec = supportedCodec(negotiated.codec))
@@ -161,6 +185,7 @@ object MirrorSessionCoordinator {
                 _pendingPairing.value = PairingPrompt(device, profile, handshake.pairingPin, handshake.fingerprint)
             },
             onFailure = { error ->
+                session.move(SessionPhase.Failed, "handshake failed")
                 _connectionState.value = ConnectionState.Error(
                     message = error.localizedMessage ?: "Handshake failed"
                 )
@@ -193,6 +218,7 @@ object MirrorSessionCoordinator {
         // will really be used, not the one originally negotiated.
         val effectiveProfile = profile.copy(codec = _activeProfile.value.codec)
         runCatching { protocolWrapper.startMediaSession(effectiveProfile, fingerprint) }.onFailure {
+            session.move(SessionPhase.Failed, "session start failed")
             _connectionState.value = ConnectionState.Error(it.localizedMessage ?: "Session start failed")
             return
         }
@@ -203,12 +229,18 @@ object MirrorSessionCoordinator {
             orientation = _orientation.value,
             encryptedChannelFingerprint = fingerprint
         )
+        session.move(SessionPhase.Streaming, "approved")
+        if (app.drivelink.cast.BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+            app.drivelink.cast.service.BydTouchAccessibilityService.setInjectionAllowed(true)
+        }
         onReconfigureEncoder?.invoke(effectiveProfile, _orientation.value)
         startTelemetryLoops()
     }
 
     fun rejectPairing() {
         _pendingPairing.value = null
+        session.move(SessionPhase.Stopping, "pairing rejected")
+        app.drivelink.cast.service.BydTouchAccessibilityService.setInjectionAllowed(false)
         scope.launch { disconnect() }
     }
 
@@ -263,7 +295,9 @@ object MirrorSessionCoordinator {
                 _telemetry.value = _telemetry.value.copy(rttMs = rtt)
             },
             onTouchEvent = { xNorm, yNorm, action ->
-                if (app.drivelink.cast.BuildConfig.ENABLE_OVERLAY_AND_TOUCH) {
+                if (app.drivelink.cast.BuildConfig.ENABLE_OVERLAY_AND_TOUCH &&
+                    session.phase == SessionPhase.Streaming
+                ) {
                     app.drivelink.cast.service.BydTouchAccessibilityService.dispatchNormalizedTouch(xNorm, yNorm, action)
                 }
             },
@@ -285,10 +319,12 @@ object MirrorSessionCoordinator {
         val device = lastConnectedDevice ?: return
         val ctx = appContext ?: return
         if (userInitiatedDisconnect || !TrustedVehiclesStore(ctx).isTrusted(device.id)) {
+            session.move(SessionPhase.Failed, "unexpected drop")
             _connectionState.value = ConnectionState.Error("انقطع الاتصال بشاشة السيارة")
             return
         }
         if (reconnectJob?.isActive == true) return
+        session.move(SessionPhase.Reconnecting, "reconnect")
         reconnectJob = scope.launch {
             val delaysMs = longArrayOf(1_500L, 3_000L, 5_000L)
             for ((idx, waitMs) in delaysMs.withIndex()) {
@@ -296,6 +332,8 @@ object MirrorSessionCoordinator {
                 _connectionState.value = ConnectionState.Reconnecting(device, idx + 1)
                 delay(waitMs)
                 protocolWrapper.disconnect()
+                session.move(SessionPhase.Connecting, "reconnect attempt")
+                session.move(SessionPhase.Handshaking, "reconnect handshake")
                 val base = _profileOverride.value ?: qualityNegotiator.initialProfileFor(device)
                 val profile = base.copy(codec = _preferredCodec.value)
                 val result = protocolWrapper.connectAndHandshake(device, profile)
@@ -306,15 +344,20 @@ object MirrorSessionCoordinator {
                     val selected = profile.copy(codec = supportedCodec(profile.codec))
                     _activeProfile.value = selected
                     _pendingPairing.value = PairingPrompt(device, selected, hs.pairingPin, hs.fingerprint)
+                    session.move(SessionPhase.AwaitingApproval, "reconnected; awaiting approval")
                     return@launch
                 }
+                session.move(SessionPhase.Failed, "reconnect attempt failed")
             }
+            session.move(SessionPhase.Failed, "reconnect exhausted")
             _connectionState.value = ConnectionState.Error("تعذر إعادة الاتصال بشاشة BYD")
         }
     }
 
     suspend fun disconnect() {
         userInitiatedDisconnect = true
+        session.move(SessionPhase.Stopping, "user disconnect")
+        app.drivelink.cast.service.BydTouchAccessibilityService.setInjectionAllowed(false)
         reconnectJob?.cancel()
         reconnectJob = null
         pingJob?.cancel()
@@ -322,6 +365,7 @@ object MirrorSessionCoordinator {
         _pendingPairing.value = null
         protocolWrapper.disconnect()
         onStopServices?.invoke()
+        session.reset("disconnected")
         _connectionState.value = ConnectionState.Idle
     }
 }

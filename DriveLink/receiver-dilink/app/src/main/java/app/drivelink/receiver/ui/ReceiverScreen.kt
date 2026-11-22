@@ -99,6 +99,8 @@ fun ReceiverScreen(
     isMuted: Boolean = false,
     onToggleMute: () -> Unit = {},
     onDisconnect: () -> Unit = {},
+    onApprove: () -> Unit = {},
+    onDeny: () -> Unit = {},
     onSurfaceReady: (Surface?) -> Unit,
     onTouchNormalized: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> }
 ) {
@@ -384,8 +386,59 @@ fun ReceiverScreen(
                                 color = ReceiverColors.SecondaryText,
                                 fontSize = 14.sp
                             )
+                            state.identityFingerprint?.let { identity ->
+                                Text(
+                                    text = "Sender Identity: ${identity.take(16)}…",
+                                    color = ReceiverColors.SecondaryText,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = if (state.trusted) {
+                                        "جهاز موثوق • Trusted sender"
+                                    } else {
+                                        "جهاز جديد • New sender"
+                                    },
+                                    color = if (state.trusted) ReceiverColors.Success else ReceiverColors.Primary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            state.warning?.let { warning ->
+                                Text(
+                                    text = warning,
+                                    color = ReceiverColors.Error,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            if (state.approved) {
+                                Text(
+                                    text = "تمت الموافقة، بانتظار بدء البث • Approved, waiting for stream",
+                                    color = ReceiverColors.Success,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                            } else {
+                                Button(
+                                    onClick = onApprove,
+                                    colors = ButtonDefaults.buttonColors(containerColor = ReceiverColors.Success),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(54.dp)
+                                ) {
+                                    Text(
+                                        text = "موافقة وبدء العرض • Approve & Start",
+                                        color = Color(0xFF04140C),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                            }
                             OutlinedButton(
-                                onClick = onDisconnect,
+                                onClick = onDeny,
                                 border = BorderStroke(1.dp, ReceiverColors.Error),
                                 shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier

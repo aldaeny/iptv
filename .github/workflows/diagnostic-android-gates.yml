@@ -1,8 +1,7 @@
 name: Diagnostic – Android gates (temporary)
 
 on:
-  push:
-    branches: [arena/d63cd414-iptv]
+  workflow_dispatch:
 
 permissions:
   contents: read

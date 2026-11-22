@@ -1,4 +1,6 @@
-# PROTOCOL COMPATIBILITY MATRIX (`BYD-WMP v1.0`)
+# PROTOCOL COMPATIBILITY MATRIX (`BYD-WMP v1.2.0` — wire `0x01`)
+
+> تحديث 2026-11-22: رُفع إصدار المستند إلى 1.2.0 مع إبقاء wire version `0x01`. أُضيف `DEVICE_IDENTITY 0x0A` وموافقة المستقبل الصريحة؛ الصفوف أدناه تصف التوافق الأساسي.
 
 | Feature / Field | Canonical Spec (`byd_mirror_protocol.json`) | Android Sender (`DriveLink/android`) | iOS Sender (`DriveLink/ios`) | BYD Receiver (`DriveLink/receiver-dilink`) | Windows Simulator (`DriveLink/simulator`) | Parity Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -7,6 +9,7 @@
 | **Discovery** | `_byd-mirror._tcp.` + Beacon `47813` | NSD + UDP `47813` (TTL 6.5s) + Wi-Fi Direct | Bonjour + UDP `47813` (TTL 6.5s) | NSD + Multi-NIC UDP `47813` | mDNS + Multi-NIC UDP `47813` | **PASS** |
 | **Key Exchange Format** | ECDH P-256 + 16B Salt + HKDF-SHA256 | X.509 SPKI (91B) | Raw X9.63 (65B `0x04..`) | Auto-detects SPKI & X9.63 | Auto-detects SPKI & X9.63 | **PASS** |
 | **Cipher & 0B Payload** | AES-256-GCM (12B nonce, 16B tag = 28B min) | `size >= 28` (`ChannelCryptoManager.kt`) | `AES.GCM.SealedBox` | `size >= 28` (`ReceiverCryptoManager.kt`) | `len(wire) >= 28` (`main.go`) | **PASS** |
+| **Device Identity (`0x0A`)** | `[1B ver][2B pubLen][SPKI/X9.63][2B sigLen][DER]` | `IdentityProofCodec` (Keystore) | `DeviceIdentityManager` (Keychain) | `ReceiverIdentityVerifier` + manual approval | Not implemented (manual approval only) | **PARTIAL (optional)** |
 | **PIN Derivation** | `SHA256(key)[0..2] & 0x7FFFFF % 1_000_000` | Identical | Identical | Identical | Identical | **PASS** |
 | **Video Codec & Annex-B** | H.264 / H.265 Annex-B | `MediaCodec` H.264 default + H.265 fallback, SPS/PPS prepended to IDR | `VideoToolbox` H.264 default + H.265, inline SPS/PPS/VPS | `MediaCodec` H.264 / H.265 (auto capability check) | WebCodecs dynamic SPS `avc1.PPCCLL` / `hvc1` | **PASS** |
 | **MTU Fragmentation** | `0x13` (`<= 1150B` UDP / `32000B` TCP) | `VIDEO_NALU_FRAG` UDP + TCP | `encodeVideoUdpFrames` + `encodeVideoTcpFrames` | `UdpFrameReassembler` (bounded 12 frames / 256 frags) | `FrameReassembler` (bounded 16 frames / 256 frags) | **PASS** |

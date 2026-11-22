@@ -3,6 +3,7 @@ package app.drivelink.cast.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.drivelink.cast.core.capability.Capability
 import app.drivelink.cast.core.model.BydDevice
 import app.drivelink.cast.core.model.ConnectionState
 import app.drivelink.cast.core.model.DisplayOrientation
@@ -17,6 +18,7 @@ import app.drivelink.cast.core.network.WifiP2pTransport
 import app.drivelink.cast.core.security.TrustedVehicle
 import app.drivelink.cast.core.security.TrustedVehiclesStore
 import app.drivelink.cast.core.session.MirrorSessionCoordinator
+import app.drivelink.cast.core.session.SessionPhase
 import app.drivelink.cast.core.session.PairingPrompt
 import app.drivelink.cast.core.streaming.ThermalPowerManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -45,6 +48,11 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
     val profileOverride: StateFlow<DisplayProfile?> = MirrorSessionCoordinator.profileOverride
     val telemetry: StateFlow<TelemetryMetrics> = MirrorSessionCoordinator.telemetry
     val pendingPairing: StateFlow<PairingPrompt?> = MirrorSessionCoordinator.pendingPairing
+    val sessionPhase: StateFlow<SessionPhase> = MirrorSessionCoordinator.session.snapshot
+        .map { it.phase }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MirrorSessionCoordinator.session.phase)
+
+    val capabilities: List<Capability> = MirrorSessionCoordinator.capabilities
 
     private val _autoConnectEnabled = MutableStateFlow(true)
     val autoConnectEnabled: StateFlow<Boolean> = _autoConnectEnabled.asStateFlow()
@@ -84,7 +92,7 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
                 discoveredDevices,
                 _autoConnectEnabled
             ) { inRange, devices, enabled ->
-                Triple(inRange, devices.firstOrNull { trustedStore.isTrusted(it.id) } ?: devices.firstOrNull(), enabled)
+                Triple(inRange, devices.firstOrNull { trustedStore.isTrusted(it.id) }, enabled)
             }.collect { (inRange, candidate, enabled) ->
                 if (enabled && inRange && candidate != null && connectionState.value is ConnectionState.Idle) {
                     connectToDevice(candidate)

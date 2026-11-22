@@ -48,11 +48,15 @@ class AntiReplayWindow {
  * Reassembles MTU-fragmented VIDEO_NALU_FRAG packets:
  * Payload format: [4B frameId][2B fragIdx][2B totalFrags][chunkBytes]
  */
-class UdpFrameReassembler(private val maxPendingFrames: Int = 12) {
+class UdpFrameReassembler(
+    private val maxPendingFrames: Int = 12,
+    private val frameTimeoutNs: Long = 2_000_000_000L
+) {
 
     private data class PendingFrame(
         val totalFrags: Int,
         val chunks: Array<ByteArray?>,
+        val createdAtNs: Long,
         var receivedCount: Int = 0
     )
 
@@ -60,6 +64,7 @@ class UdpFrameReassembler(private val maxPendingFrames: Int = 12) {
 
     @Synchronized
     fun pushFragment(payload: ByteArray): ByteArray? {
+        evictExpired()
         if (payload.size <= FRAG_HEADER_BYTES) return null
         val buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
         val frameId = buf.int
@@ -73,7 +78,7 @@ class UdpFrameReassembler(private val maxPendingFrames: Int = 12) {
                 val oldestKey = pending.keys.firstOrNull() ?: break
                 pending.remove(oldestKey)
             }
-            PendingFrame(totalFrags, arrayOfNulls(totalFrags))
+            PendingFrame(totalFrags, arrayOfNulls(totalFrags), System.nanoTime())
         }
 
         if (entry.totalFrags != totalFrags) return null
@@ -95,6 +100,15 @@ class UdpFrameReassembler(private val maxPendingFrames: Int = 12) {
     @Synchronized
     fun clear() {
         pending.clear()
+    }
+
+    private fun evictExpired() {
+        val now = System.nanoTime()
+        val iterator = pending.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value.createdAtNs > frameTimeoutNs) iterator.remove()
+        }
     }
 
     companion object {

@@ -46,6 +46,7 @@ fun MirrorDashboardScreen(
     val pendingPairing by viewModel.pendingPairing.collectAsState()
     val isArabic by viewModel.isArabic.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val capabilitySnapshot = viewModel.capabilities
 
     var currentTab by remember { mutableStateOf(MirrorTab.HOME) }
     var showActiveMirrorScreen by remember { mutableStateOf(false) }
@@ -162,6 +163,7 @@ fun MirrorDashboardScreen(
                     state = state,
                     discoveredDevices = devices,
                     telemetry = telemetry,
+                    capabilities = capabilitySnapshot,
                     isArabic = isArabic,
                     onStartMirroring = { viewModel.onOneTapConnect() },
                     onOpenDevices = {
