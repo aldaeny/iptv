@@ -278,6 +278,12 @@ class BydReceiverServer(
                         failedHandshakes.set(0)
                         client.soTimeout = 0
                         currentMime = payload.decodeToString().ifBlank { MediaFormat.MIMETYPE_VIDEO_AVC }
+                        // Validate and normalize mime type
+                        currentMime = when (currentMime) {
+                            "video/hevc", "video/HEVC" -> MediaFormat.MIMETYPE_VIDEO_HEVC
+                            "video/avc", "video/AVC" -> MediaFormat.MIMETYPE_VIDEO_AVC
+                            else -> MediaFormat.MIMETYPE_VIDEO_AVC
+                        }
                         activeMime = currentMime
                         activeLandscape = isLandscape
                         val w = if (activeLandscape) activeBaseWidth else activeBaseHeight
