@@ -47,16 +47,19 @@ class FrameRateGovernor(initialTargetFps: Int) {
         }
 
     private var lastEmitNs: Long = 0L
+    private var hasEmitted: Boolean = false
 
     @Synchronized
     fun shouldEmit(nowNs: Long, isKeyFrame: Boolean): Boolean {
         if (isKeyFrame) {
             lastEmitNs = nowNs
+            hasEmitted = true
             return true
         }
         val intervalNs = 1_000_000_000L / targetFps
-        if (lastEmitNs == 0L || nowNs - lastEmitNs >= intervalNs) {
+        if (!hasEmitted || nowNs - lastEmitNs >= intervalNs) {
             lastEmitNs = nowNs
+            hasEmitted = true
             return true
         }
         return false
@@ -65,5 +68,6 @@ class FrameRateGovernor(initialTargetFps: Int) {
     @Synchronized
     fun reset() {
         lastEmitNs = 0L
+        hasEmitted = false
     }
 }
