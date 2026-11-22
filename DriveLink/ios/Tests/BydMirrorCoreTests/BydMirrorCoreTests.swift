@@ -101,4 +101,22 @@ final class BydMirrorCoreTests: XCTestCase {
         store.remove(fingerprint: "ABC")
         XCTAssertFalse(store.isTrusted(fingerprint: "abc"))
     }
+
+    func testTrustedVehicleStoreSurvivesAppGroupContainer() {
+        let store = KeychainTrustedVehiclesStore()
+        let id = "test-" + UUID().uuidString
+        defer { store.remove(deviceId: id) }
+        store.save(
+            TrustedVehicle(
+                id: id,
+                displayName: "BYD Test",
+                fingerprint: "f".uppercased(),
+                pairedAtEpoch: 1_700_000_000
+            )
+        )
+        XCTAssertTrue(store.isTrusted(deviceId: id))
+        XCTAssertEqual(store.loadAll().first(where: { $0.id == id })?.fingerprint, "F")
+        store.remove(deviceId: id)
+        XCTAssertFalse(store.isTrusted(deviceId: id))
+    }
 }
