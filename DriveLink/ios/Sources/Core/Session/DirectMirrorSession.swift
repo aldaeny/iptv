@@ -9,21 +9,20 @@ import ReplayKit
 /// so it installs and runs cleanly with a $0 free Apple ID via SideStore / AltStore / Sideloadly.
 public final class DirectMirrorSession: @unchecked Sendable {
 
-    private let protocolWrapper = BydProtocolWrapper()
     private let transport = PeerTransportClient()
-    private var videoEncoder: HardwareVideoEncoder?
-    private var audioEncoder: AudioAacEncoder?
-    private var pingTimer: DispatchSourceTimer?
+    private var protocolWrapper: ProtocolWrapper
+    private let cryptoManager = ChannelCryptoManager()
+    private let brandRegistry = BrandRegistry.shared
     
     // Security: Key rotation timer
     private var keyRotationTimer: DispatchSourceTimer?
-    private let keyRotationInterval: TimeInterval = 3600 // 1 hour
+    private let keyRotationInterval: TimeInterval = 3600 # 1 hour
     
     // Security: Audit logging
     private let auditLogger = AuditLogger()
     private let auditEvents = AuditEvents(auditLogger:)
 
-    private var activeDevice: BydDevice?
+    private var activeDevice: DeviceInfo?
     private var activeProfile: DisplayProfile = .diLink15_6FHD
     private var activeOrientation: DisplayOrientation = .landscape
     private var isDeviceTrusted = false
@@ -39,16 +38,19 @@ public final class DirectMirrorSession: @unchecked Sendable {
     private var lastRxSeq: UInt32 = 0
     private var useTcpMediaFallback = false
 
-    public var onPairingVerification: (@Sendable (BydDevice, String, String) -> Void)?
-    public var onStreamingStarted: (@Sendable (BydDevice, DisplayProfile, String) -> Void)?
+    public var onPairingVerification: (@Sendable (DeviceInfo, String, String) -> Void)?
+    public var onStreamingStarted: (@Sendable (DeviceInfo, DisplayProfile, String) -> Void)?
     public var onTelemetry: (@Sendable (Int, Int, Float, Float) -> Void)?
-    public var onReconnecting: (@Sendable (BydDevice, Int) -> Void)?
+    public var onReconnecting: (@Sendable (DeviceInfo, Int) -> Void)?
     public var onDisconnected: (@Sendable (String?) -> Void)?
 
-    public init() {}
+    public init() {
+        let preferredBrand = BrandRegistry.shared.getPreferred()
+        self.protocolWrapper = ProtocolWrapper(brandAdapter: preferredBrand)
+    }
 
     public func start(
-        device: BydDevice,
+        device: DeviceInfo,
         profile: DisplayProfile,
         orientation: DisplayOrientation,
         trusted: Bool
@@ -149,9 +151,10 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 self.handleTransportFailure(NSError(domain: "app.drivelink.cast", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection dropped"]))
             }
         )
+        let brandName = BrandRegistry.shared.getPreferred().brandName.uppercased()
         if let syn = try? protocolWrapper.encodeFrame(
             opcode: .helloSyn,
-            rawPayload: Data("BYD-IOS-DIRECT-1.0".utf8),
+            rawPayload: Data("\(brandName)-IOS-DIRECT-1.0".utf8),
             encrypt: false
         ) {
             transport.sendControl(syn)
@@ -259,7 +262,8 @@ public final class DirectMirrorSession: @unchecked Sendable {
         } catch {
             if tryHevc {
                 // Fallback to H.264
-                print("[DirectMirrorSession] HEVC encoder failed, falling back to H.264: \(error)")
+                print("[DirectMirrorSession] HEVC encoder failed, falling back to H.264: \\(error)")
+                auditLogger.log(.cryptoError, details: "HEVC encoder failed: \\(error)", severity: .error, sessionFingerprint: sessionFingerprint)
                 do {
                     videoEncoder = try createEncoder(useHevc: false)
                     // Update profile and send correct mime
@@ -302,6 +306,7 @@ public final class DirectMirrorSession: @unchecked Sendable {
         }
 
         do { try videoEncoder?.configure(profile: activeProfile, orientation: activeOrientation) } catch {
+            auditLogger.log(.cryptoError, details: "Encoder configure failed: \\(error)", severity: .error, sessionFingerprint: sessionFingerprint)
             stop(notify: false)
             onDisconnected?(error.localizedDescription)
             return
@@ -315,9 +320,11 @@ public final class DirectMirrorSession: @unchecked Sendable {
         )
         if let frame = actualStartFrame { transport.sendControl(frame) }
         streamingActive = true
+        auditLogger.sessionStart(sessionFingerprint, peerAddress: device.hostAddress)
         onStreamingStarted?(device, activeProfile, sessionFingerprint)
         startHeartbeatLoop()
         startInAppScreenCapture()
+        startKeyRotation()
     }
 
     private func startInAppScreenCapture() {
