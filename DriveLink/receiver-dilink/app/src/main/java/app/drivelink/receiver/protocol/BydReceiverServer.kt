@@ -148,6 +148,16 @@ class BydReceiverServer(
         return true
     }
 
+    fun trustedSenders() = trustStore?.list().orEmpty()
+
+    fun removeTrustedSender(fingerprint: String) {
+        trustStore?.remove(fingerprint)
+    }
+
+    fun clearTrustedSenders() {
+        trustStore?.clear()
+    }
+
     fun denyPendingSession() {
         sessionApproved = false
         sessionActive = false

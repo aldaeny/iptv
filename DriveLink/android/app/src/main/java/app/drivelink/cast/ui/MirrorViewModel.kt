@@ -21,6 +21,7 @@ import app.drivelink.cast.core.session.MirrorSessionCoordinator
 import app.drivelink.cast.core.session.SessionPhase
 import app.drivelink.cast.core.session.PairingPrompt
 import app.drivelink.cast.core.streaming.ThermalPowerManager
+import app.drivelink.cast.core.transport.TransportSelector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -142,7 +143,15 @@ class MirrorViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 device
             }
-            MirrorSessionCoordinator.connect(getApplication(), resolvedDevice)
+            val endpoint = TransportSelector.forDevice(resolvedDevice)
+                .endpointFor(resolvedDevice)
+                .getOrElse { return@launch }
+            val target = resolvedDevice.copy(
+                hostAddress = endpoint.host,
+                controlPort = endpoint.controlPort,
+                mediaPort = endpoint.mediaPort
+            )
+            MirrorSessionCoordinator.connect(getApplication(), target)
         }
     }
 
