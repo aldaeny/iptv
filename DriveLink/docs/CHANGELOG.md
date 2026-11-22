@@ -3,7 +3,7 @@
 ## 2026-11-22 — Master Execution Prompt Phase 1–11 (unreleased)
 
 - **Receiver lifecycle:** boot restore, stateful foreground notification, trusted-sender list with per-device revoke, and a `MirrorTransport` contract with LAN/Wi-Fi Direct/Miracast endpoints.
-- **CI:** run [45058936142](https://github.com/aldaeny/iptv/actions/runs/45058936142) at `9f4df72` is green: verify, Android (47 tests + both APKs), Receiver (20 tests), iOS (6 tests + unsigned IPAs), Go.
+- **CI:** run [45060424962](https://github.com/aldaeny/iptv/actions/runs/45060424962) at `87a72a2` is green: verify, Android (47 tests + both APKs), Receiver (20 tests), iOS (7 tests + unsigned IPAs), Go.
 
 - **Session:** added `SessionStateMachine` with generation guard; `Handshaking → Streaming` is illegal, and `SESSION_START` is now a request rather than an implicit start.
 - **Capabilities:** added evidence-backed Android/iOS registries; CarPlay/Android Auto/USB/Bluetooth remain explicitly `UNSUPPORTED`.

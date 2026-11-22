@@ -5,9 +5,9 @@
 
 | Combination | Transport | Status | Evidence / blocker |
 |---|---|---|---|
-| Android phone → Android receiver | LAN/NSD | **CI built/tested** | Run `45058936142` at `9f4df72` (unsigned APKs); no device test |
-| Android phone → Windows simulator | TCP/UDP | **CI built/tested** | Run `45058936142` (Go tests); no device/simulator session |
-| iPhone → Android receiver | LAN/NSD | **CI built** | Unsigned IPA built in `45058936142`; no device test |
+| Android phone → Android receiver | LAN/NSD | **CI built/tested** | Run `45060424962` at `87a72a2` (unsigned APKs); no device test |
+| Android phone → Windows simulator | TCP/UDP | **CI built/tested** | Run `45060424962` (Go tests); no device/simulator session |
+| iPhone → Android receiver | LAN/NSD | **CI built** | Unsigned IPA built in `45060424962`; no device test |
 | Android phone → BYD DiLink 5.0 | LAN/NSD | Not tested | No vehicle |
 | Android phone → BYD DiLink 4.0 | LAN/NSD | Not tested | No vehicle |
 | Android phone → BYD DiLink 3.0 | LAN/NSD | Not claimed | Older stack may differ |
