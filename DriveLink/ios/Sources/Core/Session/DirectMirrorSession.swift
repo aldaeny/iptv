@@ -220,40 +220,65 @@ public final class DirectMirrorSession: @unchecked Sendable {
 
     private func activateMediaSession() {
         guard capabilitiesReady, !streamingActive, let device = activeDevice else { return }
-        let mime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
-        guard let startFrame = try? protocolWrapper.encodeFrame(
-            opcode: .sessionStart,
-            rawPayload: Data(mime.utf8),
-            encrypt: true
-        ) else { return }
-
-        videoEncoder = HardwareVideoEncoder(isHevc: activeProfile.codec == .h265) { [weak self] annexB, ptsUs in
-            guard let self, self.streamingActive else { return }
-            self.sentVideoFrames += 1
-            if self.useTcpMediaFallback {
-                if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
+        // Try HEVC first, then fall back to H.264 (like Android)
+        let tryHevc = activeProfile.codec == .h265
+        func createEncoder(useHevc: Bool) throws -> HardwareVideoEncoder {
+            let encoder = HardwareVideoEncoder(isHevc: useHevc) { [weak self] annexB, ptsUs in
+                guard let self, self.streamingActive else { return }
+                self.sentVideoFrames += 1
+                if self.useTcpMediaFallback {
+                    if let packets = try self.protocolWrapper.encodeVideoTcpFrames(
+                        annexBNalu: annexB,
+                        timestampUs: ptsUs,
+                        encrypt: true
+                    ) {
+                        for pkt in packets { self.transport.sendControl(pkt) }
+                    }
+                } else if let packets = try self.protocolWrapper.encodeVideoUdpFrames(
                     annexBNalu: annexB,
                     timestampUs: ptsUs,
                     encrypt: true
                 ) {
-                    for pkt in packets {
-                        self.transport.sendControl(pkt)
-                    }
+                    for pkt in packets { self.transport.sendMediaUdp(pkt) }
                 }
-            } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
-                annexBNalu: annexB,
-                timestampUs: ptsUs,
-                encrypt: true
-            ) {
-                for pkt in packets {
-                    self.transport.sendMediaUdp(pkt)
+            }
+            try encoder.configure(profile: activeProfile, orientation: activeOrientation)
+            return encoder
+        }
+
+        do {
+            videoEncoder = try createEncoder(useHevc: tryHevc)
+        } catch {
+            if tryHevc {
+                // Fallback to H.264
+                print("[DirectMirrorSession] HEVC encoder failed, falling back to H.264: \(error)")
+                do {
+                    videoEncoder = try createEncoder(useHevc: false)
+                    // Update profile and send correct mime
+                    activeProfile = DisplayProfile(
+                        id: activeProfile.id,
+                        label: activeProfile.label,
+                        baseWidth: activeProfile.baseWidth,
+                        baseHeight: activeProfile.baseHeight,
+                        targetFps: activeProfile.targetFps,
+                        bitrateMbps: activeProfile.bitrateMbps,
+                        codec: .h264
+                    )
+                } catch {
+                    stop(notify: false)
+                    onDisconnected?(error.localizedDescription)
+                    return
                 }
+            } else {
+                stop(notify: false)
+                onDisconnected?(error.localizedDescription)
+                return
             }
         }
 
         audioEncoder = AudioAacEncoder { [weak self] aac, ptsUs in
             guard let self, self.streamingActive else { return }
-            if let frame = try? self.protocolWrapper.encodeFrame(
+            if let frame = try self.protocolWrapper.encodeFrame(
                 opcode: .audioAac,
                 rawPayload: aac,
                 timestampUs: ptsUs,
@@ -273,7 +298,14 @@ public final class DirectMirrorSession: @unchecked Sendable {
             onDisconnected?(error.localizedDescription)
             return
         }
-        transport.sendControl(startFrame)
+        // Send SESSION_START with actual codec mime (after potential fallback)
+        let actualMime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
+        let actualStartFrame = try? protocolWrapper.encodeFrame(
+            opcode: .sessionStart,
+            rawPayload: Data(actualMime.utf8),
+            encrypt: true
+        )
+        if let frame = actualStartFrame { transport.sendControl(frame) }
         streamingActive = true
         onStreamingStarted?(device, activeProfile, sessionFingerprint)
         startHeartbeatLoop()
