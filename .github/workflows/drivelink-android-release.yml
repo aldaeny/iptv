@@ -248,6 +248,27 @@ jobs:
           if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
+      - name: Report failing unit tests as annotations
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          failed = 0
+          for path in glob.glob('DriveLink/**/build/test-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for case in root.iter('testcase'):
+                  for bad in list(case.findall('failure')) + list(case.findall('error')):
+                      failed += 1
+                      name = f"{case.get('classname')}.{case.get('name')}"
+                      msg = (bad.get('message') or bad.text or '').strip().replace('\n', ' ')[:300]
+                      print(f"::error title=Unit test failed::{name}: {msg}")
+          if failed == 0:
+              print(f"::error title=Unit test task failed::No XML failure found (compile/setup failure?)")
+          print(f"FAILED_TEST_COUNT={failed}")
+          PY
       - name: Collect build logs
         if: always()
         run: |
