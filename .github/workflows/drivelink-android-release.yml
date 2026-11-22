@@ -248,6 +248,15 @@ jobs:
           if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
+      - name: Report Kotlin/Gradle errors as annotations
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/drivelink-logs/*.log; do
+            grep -E '(^e: |^w: .*error|error:|FAILURE: Build failed|Execution failed for task)' "$log"               | head -25 | while IFS= read -r line; do
+                  echo "::error title=Gradle $(basename "$log")::${line//$'\n'/ }"
+                done
+          done
       - name: Report failing unit tests as annotations
         if: failure()
         run: |
