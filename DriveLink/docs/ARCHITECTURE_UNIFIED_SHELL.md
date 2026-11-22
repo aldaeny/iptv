@@ -1,6 +1,6 @@
 # Architecture — Unified Shell (Phase 1–11)
 
-> Status: design implemented in source; native builds and device tests remain **BLOCKED**.
+> Status: design implemented in source; native builds and JVM/XCTest/Go tests **PASS** in CI. Device/vehicle tests and distribution signing remain **BLOCKED**.
 > This document describes the target layering and the ownership rules now enforced in code.
 
 ## 1. Layers

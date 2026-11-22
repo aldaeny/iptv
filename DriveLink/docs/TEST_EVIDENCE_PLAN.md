@@ -19,7 +19,7 @@
 |---|---|---|---|---|
 | L0 | Yes (tree-sitter) | Yes | Yes | Go/Node parse via CI |
 | L1 | Yes | Yes | Yes | Yes |
-| L2 | **PASS** (CI `45058256950`) | **PASS** | **PASS** (unsigned) | **PASS** (CI Go) |
+| L2 | **PASS** (CI `45058936142`) | **PASS** | **PASS** (unsigned) | **PASS** (CI Go) |
 | L3 | **PASS** (47 tests) | **PASS** (20 tests) | **PASS** (6 tests) | Node/Go suites pass |
 | L4 | **Not run** | — | **Not run** | Local loopback passes |
 | L5 | **Not run** | **Not run** | **Not run** | — |

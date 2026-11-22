@@ -16,7 +16,7 @@
 | Phase | Source | Native build/test | Device/vehicle |
 | --- | --- | --- | --- |
 | 1 Baseline | Done | Baseline CI `44966996220` only | — |
-| 2 Unified shell | Done | **PASS** (CI `45058256950`) | — |
+| 2 Unified shell | Done | **PASS** (CI `45058936142`) | — |
 | 3 Session/capabilities | Done | **PASS** (47 Android tests) | — |
 | 4 Encoder | Done (live apply + governor) | **PASS** (unit tests) | — |
 | 5 FullTouch | Done (geometry/duration/gate) | **PASS** (unit tests) | BLOCKED |
@@ -24,7 +24,7 @@
 | 7 Identity/security | Done (session-bound proof, no attestation) | **PASS** (unit tests) | BLOCKED |
 | 8 iOS | Done (identity + capability registry) | **PASS** (6 tests, unsigned IPA) | BLOCKED |
 | 9 Protocol/docs | Done (`1.2.0`, wire `0x01`) | — | — |
-| 10 CI | Done (invariants; arena/iOS push builds) | **PASS** (`45058256950`) | — |
+| 10 CI | Done (invariants; arena/iOS push builds) | **PASS** (`45058936142`) | — |
 | 11 Docs | Done | — | — |
 
 > CI build/test evidence now exists. The next real milestone is physical device/vehicle tests and
