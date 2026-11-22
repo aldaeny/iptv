@@ -5,6 +5,7 @@ import android.media.MediaFormat
 import android.view.Surface
 import app.drivelink.receiver.crypto.ReceiverCryptoManager
 import app.drivelink.receiver.decoder.VideoAudioDecoder
+import app.drivelink.receiver.security.TrustedSender
 import app.drivelink.receiver.security.TrustedSenderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,13 @@ class BydReceiverServer(
 
     private val _isMuted = MutableStateFlow(false)
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
+
+    private val _trustedSenders = MutableStateFlow<List<TrustedSender>>(emptyList())
+    val trustedSenders: StateFlow<List<TrustedSender>> = _trustedSenders.asStateFlow()
+
+    init {
+        refreshTrustedSenders()
+    }
 
     private var tcpServer: ServerSocket? = null
     private var udpSocket: DatagramSocket? = null
@@ -139,6 +147,7 @@ class BydReceiverServer(
         pendingSinceNs = 0L
         verifiedIdentityFingerprint?.let { fingerprint ->
             trustStore?.trust(fingerprint, pending.phoneName)
+            refreshTrustedSenders()
         }
         _state.value = pending.copy(approved = true, trusted = true)
         val mime = pendingMime
@@ -148,14 +157,18 @@ class BydReceiverServer(
         return true
     }
 
-    fun trustedSenders() = trustStore?.list().orEmpty()
-
     fun removeTrustedSender(fingerprint: String) {
         trustStore?.remove(fingerprint)
+        refreshTrustedSenders()
     }
 
     fun clearTrustedSenders() {
         trustStore?.clear()
+        refreshTrustedSenders()
+    }
+
+    private fun refreshTrustedSenders() {
+        _trustedSenders.value = trustStore?.list().orEmpty()
     }
 
     fun denyPendingSession() {

@@ -44,6 +44,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.drivelink.receiver.R
 import app.drivelink.receiver.protocol.ReceiverState
+import app.drivelink.receiver.security.TrustedSender
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -97,7 +99,9 @@ fun ReceiverScreen(
     state: ReceiverState,
     localIps: List<String> = emptyList(),
     isMuted: Boolean = false,
+    trustedSenders: List<TrustedSender> = emptyList(),
     onToggleMute: () -> Unit = {},
+    onRemoveTrusted: (String) -> Unit = {},
     onDisconnect: () -> Unit = {},
     onApprove: () -> Unit = {},
     onDeny: () -> Unit = {},
@@ -331,7 +335,9 @@ fun ReceiverScreen(
                             ReceiverTab.SETTINGS -> ReceiverControlsPanel(
                                 isMuted = isMuted,
                                 localIps = localIps,
-                                onToggleMute = onToggleMute
+                                trustedSenders = trustedSenders,
+                                onToggleMute = onToggleMute,
+                                onRemoveTrusted = onRemoveTrusted
                             )
                             ReceiverTab.HELP -> ReceiverHelpPanel()
                         }
@@ -678,7 +684,9 @@ private fun ReceiverWaitingHomePanel(localIps: List<String>) {
 private fun ReceiverControlsPanel(
     isMuted: Boolean,
     localIps: List<String>,
-    onToggleMute: () -> Unit
+    trustedSenders: List<TrustedSender>,
+    onToggleMute: () -> Unit,
+    onRemoveTrusted: (String) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -744,6 +752,60 @@ private fun ReceiverControlsPanel(
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = ReceiverColors.Surface),
+            border = BorderStroke(1.dp, ReceiverColors.Border),
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Trusted Senders • الأجهزة الموثوقة",
+                    color = ReceiverColors.PrimaryText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (trustedSenders.isEmpty()) {
+                    Text(
+                        "No trusted phones yet. A phone is added only after you approve its first pairing.",
+                        color = ReceiverColors.SecondaryText,
+                        fontSize = 13.sp
+                    )
+                } else {
+                    trustedSenders.forEach { sender ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    sender.displayName,
+                                    color = ReceiverColors.PrimaryText,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    sender.fingerprint.take(16) + "…",
+                                    color = ReceiverColors.SecondaryText,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            TextButton(onClick = { onRemoveTrusted(sender.fingerprint) }) {
+                                Text("Remove", color = ReceiverColors.Error)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -23,7 +23,7 @@ iOS: `CapabilityRegistry.swift` (same 11 ids, platform-specific states).
 
 | Capability | Android | iOS | Receiver |
 |---|---|---|---|
-| BYD-WMP transport | Available (CI `45056352610`) | Available (CI) | Available (CI) |
+| BYD-WMP transport | Available (CI `45058256950`) | Available (CI) | Available (CI) |
 | Wi-Fi Direct | Not verified | Not verified | N/A |
 | Miracast | Not verified | Not verified | N/A |
 | Screen mirroring | Available / Requires permission (flavor) | Requires permission (ReplayKit) | N/A |
@@ -35,7 +35,7 @@ iOS: `CapabilityRegistry.swift` (same 11 ids, platform-specific states).
 | USB video | Unsupported | Unsupported | Unsupported |
 | Bluetooth video | Unsupported | Unsupported | Unsupported |
 
-`CI_BASELINE_EVIDENCE` refers to GitHub Actions run `45056352610` on commit `7c2aaea`: native
+`CI_BASELINE_EVIDENCE` refers to GitHub Actions run `45058256950` on commit `1b5138b`: native
 builds and unit tests passed. It is **not** a device/vehicle test claim.
 
 ## Rules for adding a capability

@@ -34,12 +34,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by server.state.collectAsState()
             val isMuted by server.isMuted.collectAsState()
+            val trustedSenders by server.trustedSenders.collectAsState()
             val localIps = remember(state) { resolveLocalIpv4Addresses() }
             ReceiverScreen(
                 state = state,
                 localIps = localIps,
                 isMuted = isMuted,
+                trustedSenders = trustedSenders,
                 onToggleMute = { server.toggleMute() },
+                onRemoveTrusted = { fingerprint -> server.removeTrustedSender(fingerprint) },
                 onDisconnect = {
                     lifecycleScope.launch(Dispatchers.IO) {
                         server.disconnectActiveSession()
