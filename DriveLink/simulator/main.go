@@ -472,8 +472,7 @@ func (a *AuditLogger) log(eventType, severity, fingerprint, peer, details string
 	}
 
 	data, _ := json.Marshal(event)
-	data = append(data, '
-')
+	data = append(data, '\n')
 	
 	// Write to file
 	if a.file != nil {
