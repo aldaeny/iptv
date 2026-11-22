@@ -49,7 +49,7 @@ public struct Capability: Identifiable, Equatable, Sendable {
 public struct CapabilityRegistry: Sendable {
 
     public static let ciBuildEvidence =
-        "GitHub Actions run 44966996220 (baseline ed63730, before Phase 1). Current tree not built."
+        "GitHub Actions run 45056352610 (commit 7c2aaea): Android, Receiver, iOS and Go builds + unit tests passed. No device/vehicle test."
 
     public let capabilities: [Capability]
 

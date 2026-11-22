@@ -43,6 +43,6 @@ class CapabilityRegistryTest {
         val transport = CapabilityRegistry.byId(CapabilityId.BYD_WMP_TRANSPORT)
         assertNotNull(transport)
         assertEquals(CapabilityState.AVAILABLE, transport!!.state)
-        assertTrue(transport.evidence.contains("44966996220"))
+        assertTrue(transport.evidence.contains("45056352610"))
     }
 }

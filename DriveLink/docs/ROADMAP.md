@@ -16,16 +16,16 @@
 | Phase | Source | Native build/test | Device/vehicle |
 | --- | --- | --- | --- |
 | 1 Baseline | Done | Baseline CI `44966996220` only | — |
-| 2 Unified shell | Done (documented + coordinator ownership) | BLOCKED | — |
-| 3 Session/capabilities | Done | BLOCKED | — |
-| 4 Encoder | Done (live apply + governor) | BLOCKED | — |
-| 5 FullTouch | Done (geometry/duration/gate) | BLOCKED | BLOCKED |
-| 6 Receiver lifecycle | Done (foreground service + approval) | BLOCKED | BLOCKED |
-| 7 Identity/security | Done (session-bound proof, no attestation) | BLOCKED | BLOCKED |
-| 8 iOS | Done (identity + capability registry) | BLOCKED | BLOCKED |
+| 2 Unified shell | Done | **PASS** (CI `45056352610`) | — |
+| 3 Session/capabilities | Done | **PASS** (43 Android tests) | — |
+| 4 Encoder | Done (live apply + governor) | **PASS** (unit tests) | — |
+| 5 FullTouch | Done (geometry/duration/gate) | **PASS** (unit tests) | BLOCKED |
+| 6 Receiver lifecycle | Done (foreground service + approval) | **PASS** (20 tests) | BLOCKED |
+| 7 Identity/security | Done (session-bound proof, no attestation) | **PASS** (unit tests) | BLOCKED |
+| 8 iOS | Done (identity + capability registry) | **PASS** (6 tests, unsigned IPA) | BLOCKED |
 | 9 Protocol/docs | Done (`1.2.0`, wire `0x01`) | — | — |
-| 10 CI | Done (invariants; arena/iOS push builds) | Not run on this tree | — |
+| 10 CI | Done (invariants; arena/iOS push builds) | **PASS** (`45056352610`) | — |
 | 11 Docs | Done | — | — |
 
-> The next real milestone is a green CI run on this branch, then device tests. Do not upgrade
-> "Done (source)" to "Verified" without L2/L3/L5 evidence.
+> CI build/test evidence now exists. The next real milestone is physical device/vehicle tests and
+> signing; do not upgrade "CI built" to "Device tested / Vehicle tested" without L5/L6 evidence.

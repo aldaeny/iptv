@@ -58,12 +58,9 @@ data class Capability(
 
 object CapabilityRegistry {
 
-    /**
-     * The only build on which Android and Receiver compile jobs succeeded before the Phase 1–11
-     * work started. It is deliberately not presented as proof for the current working tree.
-     */
+    /** Last green native build/test run for the code in this tree. Never a device-test claim. */
     const val CI_BASELINE_EVIDENCE =
-        "GitHub Actions run 44966996220 (baseline ed63730, before Phase 1). Current tree not built."
+        "GitHub Actions run 45056352610 (commit 7c2aaea): Android, Receiver, iOS and Go builds + unit tests passed. No device/vehicle test."
 
     fun forThisBuild(): List<Capability> = listOf(
         Capability(

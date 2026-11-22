@@ -19,12 +19,12 @@
 |---|---|---|---|---|
 | L0 | Yes (tree-sitter) | Yes | Yes | Go/Node parse via CI |
 | L1 | Yes | Yes | Yes | Yes |
-| L2 | **Blocked** (no JDK/SDK locally; no CI on this tree) | **Blocked** | **Blocked** | **Blocked** (no Go) |
-| L3 | **Blocked** (44 tests written, not run) | **Blocked** (20 tests) | **Blocked** (6 tests) | Node suites pass locally |
+| L2 | **PASS** (CI `45056352610`) | **PASS** | **PASS** (unsigned) | **PASS** (CI Go) |
+| L3 | **PASS** (43 tests) | **PASS** (20 tests) | **PASS** (6 tests) | Node/Go suites pass |
 | L4 | **Not run** | — | **Not run** | Local loopback passes |
 | L5 | **Not run** | **Not run** | **Not run** | — |
 | L6 | **Not run** | **Not run** | — | — |
-| L7 | **Blocked** (signing inputs missing) | **Blocked** | **Blocked** | N/A |
+| L7 | **BLOCKED** (signing inputs missing) | **BLOCKED** | **BLOCKED** | N/A |
 
 ## Commands
 

@@ -5,9 +5,9 @@
 
 | Combination | Transport | Status | Evidence / blocker |
 |---|---|---|---|
-| Android phone → Android receiver | LAN/NSD | CI baseline only | Build run `44966996220` predates Phase 1–11 |
-| Android phone → Windows simulator | TCP/UDP | Source + local Node/Go suites | No publish run |
-| iPhone → Android receiver | LAN/NSD | Not tested | iOS not built on this tree |
+| Android phone → Android receiver | LAN/NSD | **CI built/tested** | Run `45056352610` at `7c2aaea` (unsigned APKs); no device test |
+| Android phone → Windows simulator | TCP/UDP | **CI built/tested** | Run `45056352610` (Go tests); no device/simulator session |
+| iPhone → Android receiver | LAN/NSD | **CI built** | Unsigned IPA built in `45056352610`; no device test |
 | Android phone → BYD DiLink 5.0 | LAN/NSD | Not tested | No vehicle |
 | Android phone → BYD DiLink 4.0 | LAN/NSD | Not tested | No vehicle |
 | Android phone → BYD DiLink 3.0 | LAN/NSD | Not claimed | Older stack may differ |
