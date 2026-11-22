@@ -1,6 +1,6 @@
 {
   "protocolName": "BYD-Wireless-Mirror-Protocol",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "serviceDiscovery": {
     "nsdServiceType": "_byd-mirror._tcp.",
     "controlPort": 47810,
@@ -78,6 +78,20 @@
       "codecs": ["H264"]
     }
   ],
+  "videoCodecs": {
+    "H264": {
+      "mimeType": "video/avc",
+      "description": "H.264 / AVC",
+      "supportedProfiles": ["Baseline", "Main", "High"],
+      "maxLevel": "5.1"
+    },
+    "H265": {
+      "mimeType": "video/hevc",
+      "description": "H.265 / HEVC",
+      "supportedProfiles": ["Main", "Main 10"],
+      "maxLevel": "5.1"
+    }
+  },
   "qosTargets": {
     "targetLatencyMs": 45,
     "maxAcceptableJitterMs": 18,
