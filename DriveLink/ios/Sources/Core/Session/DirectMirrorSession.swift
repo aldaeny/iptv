@@ -14,6 +14,14 @@ public final class DirectMirrorSession: @unchecked Sendable {
     private var videoEncoder: HardwareVideoEncoder?
     private var audioEncoder: AudioAacEncoder?
     private var pingTimer: DispatchSourceTimer?
+    
+    // Security: Key rotation timer
+    private var keyRotationTimer: DispatchSourceTimer?
+    private let keyRotationInterval: TimeInterval = 3600 // 1 hour
+    
+    // Security: Audit logging
+    private let auditLogger = AuditLogger()
+    private let auditEvents = AuditEvents(auditLogger:)
 
     private var activeDevice: BydDevice?
     private var activeProfile: DisplayProfile = .diLink15_6FHD
