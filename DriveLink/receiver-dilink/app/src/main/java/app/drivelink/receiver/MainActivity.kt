@@ -48,10 +48,15 @@ class MainActivity : ComponentActivity() {
                         server.disconnectActiveSession()
                     }
                 },
-                onApprove = { server.approvePendingSession() },
+                onApprove = { alwaysTrust -> server.approvePendingSession(alwaysTrust) },
                 onDeny = {
                     lifecycleScope.launch(Dispatchers.IO) {
                         server.denyPendingSession()
+                    }
+                },
+                onSetAlwaysTrust = { fingerprint, alwaysTrust ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        server.setTrustedSenderAlwaysTrust(fingerprint, alwaysTrust)
                     }
                 },
                 onSurfaceReady = { surface -> server.attachSurface(surface) },

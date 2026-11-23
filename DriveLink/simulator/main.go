@@ -7,7 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ecdh"
 	"crypto/hmac"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
@@ -23,6 +23,7 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -267,7 +268,7 @@ func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 // Handshake auto-detects raw X9.63 (65B from iOS) vs X.509 SPKI (91B from Android).
 func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	curve := ecdh.P256()
-	localPriv, err := curve.GenerateKey(rand.Reader)
+	localPriv, err := curve.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +303,7 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	}
 
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	if _, err := cryptorand.Read(salt); err != nil {
 		return nil, err
 	}
 	derived := hkdfSHA256(shared, salt, []byte(kdfInfo), 32)
@@ -354,7 +355,7 @@ func (c *CryptoSession) Encrypt(plain, aad []byte) ([]byte, error) {
 		return nil, errors.New("session key not ready")
 	}
 	nonce := make([]byte, gcmNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := cryptorand.Read(nonce); err != nil {
 		return nil, err
 	}
 	ciphertext := aead.Seal(nil, nonce, plain, aad)
@@ -542,29 +543,39 @@ func (a *AntiReplayWindow) Accept(seq int) bool {
 }
 
 type SimulatorServer struct {
-	crypto           CryptoSession
-	reasm            *FrameReassembler
-	udpReplay        AntiReplayWindow
-	clientsMu        sync.Mutex
-	clients          map[*wsClient]struct{}
-	stateMu          sync.RWMutex
-	uiState          UIState
-	tcpOutMu         sync.Mutex
-	tcpOut           net.Conn
-	outSeq           atomic.Int32
-	framesWin        atomic.Int32
-	droppedWin       atomic.Int32
-	lastUdpSeq       atomic.Int32
-	failedHandshake  atomic.Int32
-	trustStoreMu     sync.RWMutex
-	trustedSenders   map[string]bool // fingerprint -> trusted
+	crypto              CryptoSession
+	reasm               *FrameReassembler
+	udpReplay           AntiReplayWindow
+	clientsMu           sync.Mutex
+	clients             map[*wsClient]struct{}
+	stateMu             sync.RWMutex
+	uiState             UIState
+	tcpOutMu            sync.Mutex
+	tcpOut              net.Conn
+	outSeq              atomic.Int32
+	framesWin           atomic.Int32
+	droppedWin          atomic.Int32
+	lastUdpSeq          atomic.Int32
+	failedHandshake     atomic.Int32
+	trustStoreMu            sync.RWMutex
+	trustedSenders          map[string]bool // fingerprint -> trusted
+
+	// Exponential backoff + IP cooldown for failed handshakes
+	failedHandshakesPerIP   sync.Map // map[string]*atomic.Int32
+	ipCooldownUntil         sync.Map // map[string]int64 (unix ms)
+	maxBackoffMs            int64
+	baseBackoffMs           int64
+	maxFailedBeforeCooldown int32
 }
 
 func NewSimulatorServer() *SimulatorServer {
 	return &SimulatorServer{
-		reasm:         NewFrameReassembler(),
-		clients:       make(map[*wsClient]struct{}),
-		trustedSenders: make(map[string]bool),
+		reasm:                   NewFrameReassembler(),
+		clients:                 make(map[*wsClient]struct{}),
+		trustedSenders:          make(map[string]bool),
+		maxBackoffMs:            60_000,
+		baseBackoffMs:           1_000,
+		maxFailedBeforeCooldown: 3,
 		uiState: UIState{
 			State:       "waiting",
 			IsLandscape: true,
@@ -781,6 +792,40 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	handshakeCompleted := false
 
+	// Exponential backoff + IP cooldown
+	remoteIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	nowMs := time.Now().UnixMilli()
+
+	// IP cooldown check
+	if cooldownVal, ok := s.ipCooldownUntil.Load(remoteIP); ok {
+		cooldownUntil := cooldownVal.(int64)
+		if nowMs < cooldownUntil {
+			waitMs := cooldownUntil - nowMs
+			log.Printf("Connection from %s rejected — IP cooldown active (%dms remaining)", remoteIP, waitMs)
+			_ = conn.Close()
+			return
+		}
+	}
+
+	// Exponential backoff with jitter based on per-IP failure count
+	ipFailuresVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+	ipFailures := ipFailuresVal.(*atomic.Int32).Load()
+	if ipFailures >= s.maxFailedBeforeCooldown {
+		backoffExp := int(ipFailures - s.maxFailedBeforeCooldown + 1)
+		backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+		if backoffMs > s.maxBackoffMs {
+			backoffMs = s.maxBackoffMs
+		}
+		// Add jitter: ±30%
+		jitter := int64(float64(backoffMs) * 0.3 * (rand.Float64()*2 - 1))
+		totalDelay := backoffMs + jitter
+		if totalDelay < 0 {
+			totalDelay = 0
+		}
+		log.Printf("Connection from %s delayed %dms (failures=%d)", remoteIP, totalDelay, ipFailures)
+		time.Sleep(time.Duration(totalDelay) * time.Millisecond)
+	}
+
 	phoneName := "BYD Phone"
 	mime := "video/avc"
 	isLandscape := true
@@ -966,6 +1011,20 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 done:
 	if !handshakeCompleted {
 		s.failedHandshake.Add(1)
+		// Record per-IP failure and set cooldown if threshold exceeded
+		ipFailsVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+		ipFails := ipFailsVal.(*atomic.Int32)
+		newFails := ipFails.Add(1)
+		if newFails >= s.maxFailedBeforeCooldown {
+			backoffExp := int(newFails - s.maxFailedBeforeCooldown + 1)
+			backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+			if backoffMs > s.maxBackoffMs*10 {
+				backoffMs = s.maxBackoffMs * 10 // up to 10 min cooldown
+			}
+			cooldownUntil := time.Now().UnixMilli() + backoffMs
+			s.ipCooldownUntil.Store(remoteIP, cooldownUntil)
+			log.Printf("IP %s placed in cooldown for %dms (failures=%d)", remoteIP, backoffMs, newFails)
+		}
 	}
 	close(stopQos)
 	s.tcpOutMu.Lock()

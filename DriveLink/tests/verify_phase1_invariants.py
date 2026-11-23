@@ -68,7 +68,7 @@ def main() -> int:
 
     receiver = read("receiver-dilink/app/src/main/java/app/drivelink/receiver/protocol/BydReceiverServer.kt")
     for token in (
-        "fun approvePendingSession(): Boolean",
+        "fun approvePendingSession(alwaysTrust: Boolean = false): Boolean",
         "sessionApproved",
         "sessionActive",
         "OPCODE_DEVICE_IDENTITY: Byte = 0x0A",

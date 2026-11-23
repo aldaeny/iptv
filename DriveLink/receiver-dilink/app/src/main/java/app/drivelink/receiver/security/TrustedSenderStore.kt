@@ -5,7 +5,8 @@ import android.content.Context
 data class TrustedSender(
     val fingerprint: String,
     val displayName: String,
-    val pairedAtEpochMs: Long
+    val pairedAtEpochMs: Long,
+    val alwaysTrust: Boolean = false
 )
 
 /**
@@ -19,12 +20,26 @@ class TrustedSenderStore(context: Context) {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun trust(fingerprint: String, displayName: String) {
+    fun trust(fingerprint: String, displayName: String, alwaysTrust: Boolean = false) {
         val normalized = fingerprint.uppercase()
         if (normalized.isBlank()) return
         prefs.edit()
-            .putString(KEY_PREFIX + normalized, "$displayName|${System.currentTimeMillis()}")
+            .putString(KEY_PREFIX + normalized, "$displayName|${System.currentTimeMillis()}|${if (alwaysTrust) 1 else 0}")
             .apply()
+    }
+
+    @Synchronized
+    fun setAlwaysTrust(fingerprint: String, alwaysTrust: Boolean) {
+        val normalized = fingerprint.uppercase()
+        if (normalized.isBlank()) return
+        prefs.all[KEY_PREFIX + normalized]?.let { existing ->
+            val parts = existing.split('|', limit = 2)
+            val name = parts.getOrNull(0).orEmpty()
+            val pairedAt = parts.getOrNull(1)?.split('|')?.getOrNull(0)?.toLongOrNull() ?: System.currentTimeMillis()
+            prefs.edit()
+                .putString(KEY_PREFIX + normalized, "$name|$pairedAt|${if (alwaysTrust) 1 else 0}")
+                .apply()
+        }
     }
 
     @Synchronized
@@ -34,10 +49,11 @@ class TrustedSenderStore(context: Context) {
     @Synchronized
     fun list(): List<TrustedSender> = prefs.all.mapNotNull { (key, value) ->
         if (!key.startsWith(KEY_PREFIX) || value !is String) return@mapNotNull null
-        val parts = value.split('|', limit = 2)
+        val parts = value.split('|', limit = 3)
         val name = parts.getOrNull(0).orEmpty().ifBlank { "BYD Phone" }
         val pairedAt = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-        TrustedSender(key.removePrefix(KEY_PREFIX), name, pairedAt)
+        val alwaysTrust = parts.getOrNull(2)?.toIntOrNull() == 1
+        TrustedSender(key.removePrefix(KEY_PREFIX), name, pairedAt, alwaysTrust)
     }.sortedBy { it.displayName }
 
     @Synchronized

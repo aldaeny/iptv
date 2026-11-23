@@ -27,7 +27,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface ReceiverState {
     data object WaitingForPhone : ReceiverState
@@ -108,6 +110,13 @@ class BydReceiverServer(
     private val receivedFramesWindow = AtomicInteger(0)
     private val droppedFrameCount = AtomicInteger(0)
 
+    // Exponential backoff + IP cooldown for failed handshakes
+    private val failedHandshakesPerIp = ConcurrentHashMap<String, AtomicInteger>()
+    private val ipCooldownUntil = ConcurrentHashMap<String, AtomicLong>()
+    private val maxBackoffMs = 60_000L // 60 seconds max
+    private val baseBackoffMs = 1_000L // 1 second base
+    private val maxFailedBeforeCooldown = 3
+
     fun attachSurface(surface: Surface?) {
         targetSurface = surface
         val mime = activeMime
@@ -139,14 +148,16 @@ class BydReceiverServer(
     /**
      * Explicit user approval from the head-unit UI. Returns false when there is nothing waiting,
      * so a double tap cannot approve a different session that arrived in between.
+     *
+     * @param alwaysTrust If true, this sender will be auto-approved on future connections.
      */
-    fun approvePendingSession(): Boolean {
+    fun approvePendingSession(alwaysTrust: Boolean = false): Boolean {
         val pending = _state.value as? ReceiverState.PairingVerification ?: return false
         if (pending.approved) return true
         sessionApproved = true
         pendingSinceNs = 0L
         verifiedIdentityFingerprint?.let { fingerprint ->
-            trustStore?.trust(fingerprint, pending.phoneName)
+            trustStore?.trust(fingerprint, pending.phoneName, alwaysTrust)
             refreshTrustedSenders()
         }
         _state.value = pending.copy(approved = true, trusted = true)
@@ -155,6 +166,11 @@ class BydReceiverServer(
             activateSession(mime, pendingLandscape)
         }
         return true
+    }
+
+    fun setTrustedSenderAlwaysTrust(fingerprint: String, alwaysTrust: Boolean) {
+        trustStore?.setAlwaysTrust(fingerprint, alwaysTrust)
+        refreshTrustedSenders()
     }
 
     fun removeTrustedSender(fingerprint: String) {
@@ -300,10 +316,31 @@ class BydReceiverServer(
     }
 
     private suspend fun handleClient(client: Socket, scope: CoroutineScope) {
-        val fails = failedHandshakes.get()
-        if (fails >= 3) {
-            delay(minOf(fails - 2, 4) * 1_000L)
+        val remoteIp = client.inetAddress.hostAddress
+        val now = System.currentTimeMillis()
+
+        // IP cooldown check
+        val cooldownUntil = ipCooldownUntil.getOrDefault(remoteIp, AtomicLong(0)).get()
+        if (now < cooldownUntil) {
+            val waitMs = cooldownUntil - now
+            android.util.Log.w("DriveLink", "Connection from $remoteIp rejected — IP cooldown active (${waitMs}ms remaining)")
+            runCatching { client.close() }
+            return
         }
+
+        // Exponential backoff with jitter based on per-IP failure count
+        val ipFailures = failedHandshakesPerIp.getOrDefault(remoteIp, AtomicInteger(0)).get()
+        if (ipFailures >= maxFailedBeforeCooldown) {
+            val backoffMs = minOf(
+                (baseBackoffMs * (2.0.pow(ipFailures - maxFailedBeforeCooldown + 1))).toLong(),
+                maxBackoffMs
+            )
+            val jitter = (Math.random() * 0.3 * backoffMs).toLong() // ±30% jitter
+            val totalDelay = backoffMs + jitter
+            android.util.Log.w("DriveLink", "Connection from $remoteIp delayed ${totalDelay}ms (failures=$ipFailures)")
+            delay(totalDelay)
+        }
+
         client.tcpNoDelay = true
         client.soTimeout = HANDSHAKE_TIMEOUT_MS
         activeClientSocket = client
@@ -476,6 +513,16 @@ class BydReceiverServer(
 
         if (!sessionActive) {
             failedHandshakes.incrementAndGet()
+            val remoteIp = client.inetAddress.hostAddress
+            val ipFails = failedHandshakesPerIp.computeIfAbsent(remoteIp) { AtomicInteger() }.incrementAndGet()
+            if (ipFails >= maxFailedBeforeCooldown) {
+                val cooldownMs = minOf(
+                    (baseBackoffMs * (2.0.pow(ipFails - maxFailedBeforeCooldown + 1))).toLong(),
+                    maxBackoffMs * 10 // up to 10 min cooldown
+                )
+                ipCooldownUntil.put(remoteIp, AtomicLong(System.currentTimeMillis() + cooldownMs))
+                android.util.Log.w("DriveLink", "IP $remoteIp placed in cooldown for ${cooldownMs}ms (failures=$ipFails)")
+            }
         }
         if (activeClientSocket === client) {
             qosJob?.cancel()
