@@ -32,14 +32,15 @@ class TrustedSenderStore(context: Context) {
     fun setAlwaysTrust(fingerprint: String, alwaysTrust: Boolean) {
         val normalized = fingerprint.uppercase()
         if (normalized.isBlank()) return
-        prefs.all[KEY_PREFIX + normalized]?.let { existing ->
-            val parts = existing.split('|', limit = 2)
-            val name = parts.getOrNull(0).orEmpty()
-            val pairedAt = parts.getOrNull(1)?.split('|')?.getOrNull(0)?.toLongOrNull() ?: System.currentTimeMillis()
-            prefs.edit()
-                .putString(KEY_PREFIX + normalized, "$name|$pairedAt|${if (alwaysTrust) 1 else 0}")
-                .apply()
-        }
+        // Retrieve the existing stored value safely via getString; avoids using the generic Map which yields Any.
+        val existing = prefs.getString(KEY_PREFIX + normalized, null) ?: return
+        val parts = existing.split('|', limit = 3)
+        val name = parts.getOrNull(0).orEmpty()
+        val pairedAt = parts.getOrNull(1)?.toLongOrNull() ?: System.currentTimeMillis()
+        // Preserve existing flag if present, otherwise set based on the new argument.
+        prefs.edit()
+            .putString(KEY_PREFIX + normalized, "$name|$pairedAt|${if (alwaysTrust) 1 else 0}")
+            .apply()
     }
 
     @Synchronized
