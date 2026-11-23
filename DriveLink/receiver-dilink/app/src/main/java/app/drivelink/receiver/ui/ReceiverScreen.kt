@@ -338,7 +338,8 @@ fun ReceiverScreen(
                                 localIps = localIps,
                                 trustedSenders = trustedSenders,
                                 onToggleMute = onToggleMute,
-                                onRemoveTrusted = onRemoveTrusted
+                                onRemoveTrusted = onRemoveTrusted,
+                                onSetAlwaysTrust = onSetAlwaysTrust
                             )
                             ReceiverTab.HELP -> ReceiverHelpPanel()
                         }
@@ -709,7 +710,8 @@ private fun ReceiverControlsPanel(
     localIps: List<String>,
     trustedSenders: List<TrustedSender>,
     onToggleMute: () -> Unit,
-    onRemoveTrusted: (String) -> Unit
+    onRemoveTrusted: (String) -> Unit,
+    onSetAlwaysTrust: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     Column(
         modifier = Modifier
