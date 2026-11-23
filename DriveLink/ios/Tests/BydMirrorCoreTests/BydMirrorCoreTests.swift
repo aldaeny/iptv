@@ -139,7 +139,7 @@ final class BydMirrorCoreTests: XCTestCase {
             )
         )
         XCTAssertTrue(store.isTrusted(deviceId: id))
-        XCTAssertEqual(store.loadAll().first(where: { .id == id })?.fingerprint, "F")
+        XCTAssertEqual(store.loadAll().first(where: { $0.id == id })?.fingerprint, "F")
         store.remove(deviceId: id)
         XCTAssertFalse(store.isTrusted(deviceId: id))
     }

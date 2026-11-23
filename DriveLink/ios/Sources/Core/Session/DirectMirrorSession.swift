@@ -9,20 +9,13 @@ import ReplayKit
 /// so it installs and runs cleanly with a $0 free Apple ID via SideStore / AltStore / Sideloadly.
 public final class DirectMirrorSession: @unchecked Sendable {
 
+    private let protocolWrapper = BydProtocolWrapper()
     private let transport = PeerTransportClient()
-    private var protocolWrapper: ProtocolWrapper
-    private let cryptoManager = ChannelCryptoManager()
-    private let brandRegistry = BrandRegistry.shared
-    
-    // Security: Key rotation timer
-    private var keyRotationTimer: DispatchSourceTimer?
-    private let keyRotationInterval: TimeInterval = 3600 # 1 hour
-    
-    // Security: Audit logging
-    private let auditLogger = AuditLogger()
-    private let auditEvents = AuditEvents(auditLogger:)
+    private var videoEncoder: HardwareVideoEncoder?
+    private var audioEncoder: AudioAacEncoder?
+    private var pingTimer: DispatchSourceTimer?
 
-    private var activeDevice: DeviceInfo?
+    private var activeDevice: BydDevice?
     private var activeProfile: DisplayProfile = .diLink15_6FHD
     private var activeOrientation: DisplayOrientation = .landscape
     private var isDeviceTrusted = false
@@ -38,19 +31,16 @@ public final class DirectMirrorSession: @unchecked Sendable {
     private var lastRxSeq: UInt32 = 0
     private var useTcpMediaFallback = false
 
-    public var onPairingVerification: (@Sendable (DeviceInfo, String, String) -> Void)?
-    public var onStreamingStarted: (@Sendable (DeviceInfo, DisplayProfile, String) -> Void)?
+    public var onPairingVerification: (@Sendable (BydDevice, String, String) -> Void)?
+    public var onStreamingStarted: (@Sendable (BydDevice, DisplayProfile, String) -> Void)?
     public var onTelemetry: (@Sendable (Int, Int, Float, Float) -> Void)?
-    public var onReconnecting: (@Sendable (DeviceInfo, Int) -> Void)?
+    public var onReconnecting: (@Sendable (BydDevice, Int) -> Void)?
     public var onDisconnected: (@Sendable (String?) -> Void)?
 
-    public init() {
-        let preferredBrand = BrandRegistry.shared.getPreferred()
-        self.protocolWrapper = ProtocolWrapper(brandAdapter: preferredBrand)
-    }
+    public init() {}
 
     public func start(
-        device: DeviceInfo,
+        device: BydDevice,
         profile: DisplayProfile,
         orientation: DisplayOrientation,
         trusted: Bool
@@ -151,10 +141,9 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 self.handleTransportFailure(NSError(domain: "app.drivelink.cast", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection dropped"]))
             }
         )
-        let brandName = BrandRegistry.shared.getPreferred().brandName.uppercased()
         if let syn = try? protocolWrapper.encodeFrame(
             opcode: .helloSyn,
-            rawPayload: Data("\(brandName)-IOS-DIRECT-1.0".utf8),
+            rawPayload: Data("BYD-IOS-DIRECT-1.0".utf8),
             encrypt: false
         ) {
             transport.sendControl(syn)
@@ -239,66 +228,40 @@ public final class DirectMirrorSession: @unchecked Sendable {
 
     private func activateMediaSession() {
         guard capabilitiesReady, !streamingActive, let device = activeDevice else { return }
-        // Try HEVC first, then fall back to H.264 (like Android)
-        let tryHevc = activeProfile.codec == .h265
-        func createEncoder(useHevc: Bool) throws -> HardwareVideoEncoder {
-            let encoder = HardwareVideoEncoder(isHevc: useHevc) { [weak self] annexB, ptsUs in
-                guard let self, self.streamingActive else { return }
-                self.sentVideoFrames += 1
-                if self.useTcpMediaFallback {
-                    if let packets = try self.protocolWrapper.encodeVideoTcpFrames(
-                        annexBNalu: annexB,
-                        timestampUs: ptsUs,
-                        encrypt: true
-                    ) {
-                        for pkt in packets { self.transport.sendControl(pkt) }
-                    }
-                } else if let packets = try self.protocolWrapper.encodeVideoUdpFrames(
+        let mime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
+        guard let startFrame = try? protocolWrapper.encodeFrame(
+            opcode: .sessionStart,
+            rawPayload: Data(mime.utf8),
+            encrypt: true
+        ) else { return }
+
+        videoEncoder = HardwareVideoEncoder(isHevc: activeProfile.codec == .h265) { [weak self] annexB, ptsUs in
+            guard let self, self.streamingActive else { return }
+            self.sentVideoFrames += 1
+            if self.useTcpMediaFallback {
+                if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
                     annexBNalu: annexB,
                     timestampUs: ptsUs,
                     encrypt: true
                 ) {
-                    for pkt in packets { self.transport.sendMediaUdp(pkt) }
+                    for pkt in packets {
+                        self.transport.sendControl(pkt)
+                    }
                 }
-            }
-            try encoder.configure(profile: activeProfile, orientation: activeOrientation)
-            return encoder
-        }
-
-        do {
-            videoEncoder = try createEncoder(useHevc: tryHevc)
-        } catch {
-            if tryHevc {
-                // Fallback to H.264
-                print("[DirectMirrorSession] HEVC encoder failed, falling back to H.264: \\(error)")
-                auditLogger.log(.cryptoError, details: "HEVC encoder failed: \\(error)", severity: .error, sessionFingerprint: sessionFingerprint)
-                do {
-                    videoEncoder = try createEncoder(useHevc: false)
-                    // Update profile and send correct mime
-                    activeProfile = DisplayProfile(
-                        id: activeProfile.id,
-                        label: activeProfile.label,
-                        baseWidth: activeProfile.baseWidth,
-                        baseHeight: activeProfile.baseHeight,
-                        targetFps: activeProfile.targetFps,
-                        bitrateMbps: activeProfile.bitrateMbps,
-                        codec: .h264
-                    )
-                } catch {
-                    stop(notify: false)
-                    onDisconnected?(error.localizedDescription)
-                    return
+            } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
+                annexBNalu: annexB,
+                timestampUs: ptsUs,
+                encrypt: true
+            ) {
+                for pkt in packets {
+                    self.transport.sendMediaUdp(pkt)
                 }
-            } else {
-                stop(notify: false)
-                onDisconnected?(error.localizedDescription)
-                return
             }
         }
 
         audioEncoder = AudioAacEncoder { [weak self] aac, ptsUs in
             guard let self, self.streamingActive else { return }
-            if let frame = try self.protocolWrapper.encodeFrame(
+            if let frame = try? self.protocolWrapper.encodeFrame(
                 opcode: .audioAac,
                 rawPayload: aac,
                 timestampUs: ptsUs,
@@ -314,25 +277,15 @@ public final class DirectMirrorSession: @unchecked Sendable {
         }
 
         do { try videoEncoder?.configure(profile: activeProfile, orientation: activeOrientation) } catch {
-            auditLogger.log(.cryptoError, details: "Encoder configure failed: \\(error)", severity: .error, sessionFingerprint: sessionFingerprint)
             stop(notify: false)
             onDisconnected?(error.localizedDescription)
             return
         }
-        // Send SESSION_START with actual codec mime (after potential fallback)
-        let actualMime = activeProfile.codec == .h265 ? "video/hevc" : "video/avc"
-        let actualStartFrame = try? protocolWrapper.encodeFrame(
-            opcode: .sessionStart,
-            rawPayload: Data(actualMime.utf8),
-            encrypt: true
-        )
-        if let frame = actualStartFrame { transport.sendControl(frame) }
+        transport.sendControl(startFrame)
         streamingActive = true
-        auditLogger.sessionStart(sessionFingerprint, peerAddress: device.hostAddress)
         onStreamingStarted?(device, activeProfile, sessionFingerprint)
         startHeartbeatLoop()
         startInAppScreenCapture()
-        startKeyRotation()
     }
 
     private func startInAppScreenCapture() {
