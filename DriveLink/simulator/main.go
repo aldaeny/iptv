@@ -28,8 +28,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -252,15 +254,10 @@ func (c *CryptoSession) Rekey(newSalt []byte) error {
 	defer c.mu.Unlock()
 
 	curve := ecdh.P256()
-	localPriv, err := curve.GenerateKey(rand.Reader)
+	localPriv, err := curve.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return err
 	}
-
-	var peerPub *ecdh.PublicKey
-	// We need the peer's public key - in practice this would be stored during initial handshake
-	// For now, we'll use the existing shared secret derivation
-	// Note: Full rekey requires peer cooperation; this is a local re-derivation
 	_ = localPriv
 
 	// In a real implementation, this would require a new key exchange with the peer
@@ -289,12 +286,6 @@ func (c *CryptoSession) GetSessionKeyForAudit() []byte {
 	}
 	// Return a hash of the session key for audit (never the raw key)
 	return []byte(c.fingerprint)
-}
-
-func (c *CryptoSession) IsSessionActive() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.active
 }
 
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
@@ -684,9 +675,6 @@ const (
 	AuditReconnectAttempt     = "RECONNECT_ATTEMPT"
 	AuditReconnectSuccess     = "RECONNECT_SUCCESS"
 	AuditReconnectFailure     = "RECONNECT_FAILURE"
-	AuditDecryptionFailure    = "DECRYPTION_FAILURE"
-	AuditReplayAttack         = "REPLAY_ATTACK"
-	AuditInvalidSequence      = "INVALID_SEQUENCE"
 	AuditProtocolViolation    = "PROTOCOL_VIOLATION"
 )
 
