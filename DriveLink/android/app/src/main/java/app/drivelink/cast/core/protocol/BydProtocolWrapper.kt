@@ -4,6 +4,8 @@ import app.drivelink.cast.core.model.BydDevice
 import app.drivelink.cast.core.model.DisplayOrientation
 import app.drivelink.cast.core.model.DisplayProfile
 import app.drivelink.cast.core.security.ChannelCryptoManager
+import app.drivelink.cast.core.security.DeviceIdentitySigner
+import app.drivelink.cast.core.security.IdentityProofCodec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +33,7 @@ enum class ProtocolOpcode(val code: Byte) {
     SESSION_START(0x07),
     SESSION_STOP(0x08),
     ORIENTATION_CHANGE(0x09),
+    DEVICE_IDENTITY(0x0A),
     VIDEO_NALU(0x10),
     AUDIO_AAC(0x11),
     KEYFRAME_REQUEST(0x12),
@@ -66,6 +69,8 @@ data class HandshakeResult(
 class BydProtocolWrapper(
     private val cryptoManager: ChannelCryptoManager = ChannelCryptoManager()
 ) {
+    /** Optional installation identity; absent means the receiver must fall back to manual approval. */
+    var identitySigner: DeviceIdentitySigner? = null
     private val sequenceCounter = AtomicInteger(0)
     private val udpSequenceCounter = AtomicInteger(0)
     private val frameIdCounter = AtomicInteger(0)
@@ -132,6 +137,14 @@ class BydProtocolWrapper(
             val peerPubKey = keyResp.payload.copyOfRange(16, keyResp.payload.size)
             cryptoManager.deriveSessionKey(peerPubKey, sessionSalt)
             encryptionActive = true
+
+            // Step 2b: prove this installation without revealing the private key. The proof is
+            // bound to this ECDH session, so it cannot be replayed into another one.
+            identitySigner?.let { signer ->
+                IdentityProofCodec.create(cryptoManager.sessionFingerprint, signer)?.let { proof ->
+                    sendFrame(ProtocolOpcode.DEVICE_IDENTITY, proof, encrypt = true)
+                }
+            }
 
             // Step 3: Negotiate Display Capabilities (SESSION_START waits for PIN confirmation if untrusted)
             val capPayload = "${preferredProfile.id}|${preferredProfile.baseWidth}x${preferredProfile.baseHeight}@${preferredProfile.targetFps}"

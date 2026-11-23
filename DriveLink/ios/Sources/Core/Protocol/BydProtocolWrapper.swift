@@ -10,6 +10,7 @@ public enum ProtocolOpcode: UInt8, Sendable {
     case sessionStart = 0x07
     case sessionStop = 0x08
     case orientationChange = 0x09
+    case deviceIdentity = 0x0A
     case videoNalu = 0x10
     case audioAac = 0x11
     case keyframeRequest = 0x12

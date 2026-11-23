@@ -37,6 +37,10 @@ class ScreenCaptureEncoder(
     private var drainJob: Job? = null
     private var codecConfigNalu: ByteArray? = null
     private var callbackRegistered = false
+    private var activeProfile: DisplayProfile? = null
+    private var activeOrientation: DisplayOrientation = DisplayOrientation.LANDSCAPE
+    private var activeDensityDpi: Int = 0
+    private val frameGovernor = FrameRateGovernor(60)
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -126,6 +130,11 @@ class ScreenCaptureEncoder(
         codec = encoder
         inputSurface = surface
         virtualDisplay = display
+        activeProfile = profile
+        activeOrientation = orientation
+        activeDensityDpi = densityDpi
+        frameGovernor.targetFps = profile.targetFps
+        frameGovernor.reset()
 
         drainJob = scope.launch(Dispatchers.Default) {
             var codecConfigNalu: ByteArray? = null
@@ -149,8 +158,10 @@ class ScreenCaptureEncoder(
                         } else if (isKey && codecConfigNalu != null) {
                             // Smart cast: codecConfigNalu is non-null here due to the check above
                             val combined = codecConfigNalu + nalu
-                            runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
-                        } else {
+                            if (frameGovernor.shouldEmit(System.nanoTime(), isKeyFrame = true)) {
+                                runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
+                            }
+                        } else if (frameGovernor.shouldEmit(System.nanoTime(), isKeyFrame = false)) {
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         }
                     }
@@ -164,11 +175,39 @@ class ScreenCaptureEncoder(
         start(profile, orientation, densityDpi)
     }
 
-    fun updateBitrateMbps(bitrateMbps: Int) {
-        val params = Bundle().apply {
-            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrateMbps * 1_000_000)
+    /**
+     * Applies bitrate/FPS changes to the running encoder. Returns true when the change was live;
+     * false means the caller must restart (dimensions or codec changed), which is deliberately not
+     * done from inside a codec callback to avoid recursive restarts.
+     */
+    fun applyProfile(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int): Boolean {
+        val current = activeProfile ?: return false
+        val plan = EncoderReconfiguration.plan(current, profile)
+        if (plan.requiresRestart) {
+            start(profile, orientation, densityDpi)
+            return false
         }
-        runCatching { codec?.setParameters(params) }
+        if (!plan.canApplyLive) return true
+        val params = Bundle().apply {
+            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, profile.bitrateMbps * 1_000_000)
+            putInt(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
+        }
+        if (runCatching { codec?.setParameters(params) }.isFailure) return false
+        frameGovernor.targetFps = profile.targetFps
+        activeProfile = profile
+        activeOrientation = orientation
+        activeDensityDpi = densityDpi
+        requestKeyFrame()
+        return true
+    }
+
+    fun updateBitrateMbps(bitrateMbps: Int) {
+        val profile = activeProfile ?: return
+        applyProfile(
+            profile.copy(bitrateMbps = bitrateMbps),
+            activeOrientation,
+            activeDensityDpi
+        )
     }
 
     fun requestKeyFrame() {

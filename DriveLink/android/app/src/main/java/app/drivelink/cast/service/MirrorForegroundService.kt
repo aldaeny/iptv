@@ -129,8 +129,12 @@ class MirrorForegroundService : Service() {
         MirrorSessionCoordinator.onKeyframeRequested = { vEncoder.requestKeyFrame() }
         MirrorSessionCoordinator.onReconfigureEncoder = { profile, orientation ->
             serviceScope.launch {
-                runCatching { vEncoder.reconfigure(profile, orientation, densityDpi) }
+                val appliedLive = runCatching { vEncoder.applyProfile(profile, orientation, densityDpi) }
                     .onFailure { android.util.Log.e("DriveLink", "Encoder reconfiguration failed", it); stopSelf() }
+                    .getOrDefault(false)
+                if (!appliedLive) {
+                    android.util.Log.i("DriveLink", "Encoder restarted for ${profile.id}")
+                }
             }
         }
         MirrorSessionCoordinator.onStopServices = {

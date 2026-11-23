@@ -178,6 +178,14 @@ public final class DirectMirrorSession: @unchecked Sendable {
             if let fp = try? protocolWrapper.completeKeyExchange(responsePayload: packet.payload),
                activeDevice != nil {
                 sessionFingerprint = fp
+                if let proof = DeviceIdentityManager.shared.createProof(sessionFingerprint: fp),
+                   let identityFrame = try? protocolWrapper.encodeFrame(
+                       opcode: .deviceIdentity,
+                       rawPayload: proof,
+                       encrypt: true
+                   ) {
+                    transport.sendControl(identityFrame)
+                }
                 let cap = Data("\(activeProfile.id)|\(activeProfile.baseWidth)x\(activeProfile.baseHeight)@\(activeProfile.targetFps)".utf8)
                 if let req = try? protocolWrapper.encodeFrame(opcode: .capabilitiesReq, rawPayload: cap, encrypt: true) {
                     transport.sendControl(req)

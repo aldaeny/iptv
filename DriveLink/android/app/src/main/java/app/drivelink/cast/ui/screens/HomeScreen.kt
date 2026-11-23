@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.drivelink.cast.core.capability.Capability
+import app.drivelink.cast.core.capability.CapabilityState
 import app.drivelink.cast.core.model.BydDevice
 import app.drivelink.cast.core.model.ConnectionState
 import app.drivelink.cast.core.model.TelemetryMetrics
@@ -55,6 +57,7 @@ fun HomeScreen(
     discoveredDevices: List<BydDevice>,
     telemetry: TelemetryMetrics,
     isArabic: Boolean,
+    capabilities: List<Capability> = emptyList(),
     onStartMirroring: () -> Unit,
     onOpenDevices: () -> Unit,
     onOpenActiveMirror: () -> Unit,
@@ -244,6 +247,12 @@ fun HomeScreen(
             }
         }
 
+        if (capabilities.isNotEmpty()) {
+            item {
+                CapabilitySummaryCard(capabilities = capabilities, isArabic = isArabic)
+            }
+        }
+
         // Connected Device Card (Only when actually streaming)
         if (state is ConnectionState.Streaming) {
             item {
@@ -376,4 +385,81 @@ private fun homeSubtitle(state: ConnectionState, discoveredCount: Int, isArabic:
     }
     is ConnectionState.Error -> state.message
     else -> if (isArabic) "يرجى الانتظار بينما يتم تأسيس الاتصال اللاسلكي..." else "Establishing secure local wireless connection..."
+}
+
+@Composable
+private fun CapabilitySummaryCard(capabilities: List<Capability>, isArabic: Boolean) {
+    BydSurfaceCard(borderColor = BydColors.Border) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = if (isArabic) "قدرات هذا الإصدار" else "Capabilities in this build",
+                color = BydColors.PrimaryText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            capabilities.take(6).forEach { capability ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = capabilityLabel(capability, isArabic),
+                        color = BydColors.SecondaryText,
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = capabilityStateLabel(capability.state, isArabic),
+                        color = capabilityStateColor(capability.state),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun capabilityLabel(capability: Capability, isArabic: Boolean): String {
+    val english = capability.id.name.replace('_', ' ').lowercase()
+        .split(' ').joinToString(" ") { it.replaceFirstChar { ch -> ch.uppercase() } }
+    if (!isArabic) return english
+    return when (capability.id.name) {
+        "BYD_WMP_TRANSPORT" -> "بروتوكول BYD-WMP"
+        "WIFI_DIRECT" -> "Wi-Fi Direct"
+        "MIRACAST" -> "Miracast"
+        "SCREEN_MIRRORING" -> "مشاركة الشاشة"
+        "REVERSE_TOUCH" -> "اللمس العكسي"
+        "AUDIO_STREAMING" -> "بث الصوت"
+        "HEVC_ENCODING" -> "ترميز HEVC"
+        "CARPLAY" -> "CarPlay"
+        "ANDROID_AUTO" -> "Android Auto"
+        "USB_VIDEO" -> "فيديو USB"
+        "BLUETOOTH_VIDEO" -> "فيديو Bluetooth"
+        else -> english
+    }
+}
+
+private fun capabilityStateLabel(state: CapabilityState, isArabic: Boolean): String = when (state) {
+    CapabilityState.AVAILABLE -> if (isArabic) "متاح" else "Available"
+    CapabilityState.REQUIRES_PERMISSION -> if (isArabic) "يتطلب إذناً" else "Needs permission"
+    CapabilityState.DEGRADED -> if (isArabic) "محدود" else "Degraded"
+    CapabilityState.UNSUPPORTED -> if (isArabic) "غير مدعوم" else "Unsupported"
+    CapabilityState.NOT_VERIFIED -> if (isArabic) "غير متحقق" else "Not verified"
+    CapabilityState.BLOCKED_BY_PLATFORM -> if (isArabic) "محجوب بالنظام" else "Platform blocked"
+    CapabilityState.BLOCKED_BY_HARDWARE -> if (isArabic) "محجوب بالعتاد" else "Hardware blocked"
+    CapabilityState.FAILED -> if (isArabic) "فشل" else "Failed"
+}
+
+private fun capabilityStateColor(state: CapabilityState): Color = when (state) {
+    CapabilityState.AVAILABLE -> BydColors.Success
+    CapabilityState.REQUIRES_PERMISSION, CapabilityState.DEGRADED -> BydColors.Warning
+    CapabilityState.NOT_VERIFIED -> BydColors.SecondaryText
+    CapabilityState.UNSUPPORTED, CapabilityState.BLOCKED_BY_PLATFORM,
+    CapabilityState.BLOCKED_BY_HARDWARE, CapabilityState.FAILED -> BydColors.Error
 }

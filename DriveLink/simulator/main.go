@@ -4,13 +4,15 @@ import (
 	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/ecdh"
 	"crypto/hmac"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"embed"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -20,6 +22,8 @@ import (
 	"io/fs"
 	"log"
 	"math"
+	"math/big"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -61,6 +65,7 @@ const (
 	opSessionStart      byte = 0x07
 	opSessionStop       byte = 0x08
 	opOrientationChange byte = 0x09
+	opDeviceIdentity    byte = 0x0A
 	opVideoNalu         byte = 0x10
 	opAudioAAC          byte = 0x11
 	opKeyframeRequest   byte = 0x12
@@ -70,6 +75,147 @@ const (
 	opHeartbeatPong     byte = 0x21
 	opQosTelemetry      byte = 0x22
 )
+
+// DEVICE_IDENTITY (0x0A) verification constants
+const (
+	identityVersion     = 1
+	identityPrefix      = "BYD-WMP-IDENTITY-V1|"
+	p256SpkiPrefixHex   = "3059301306072a8648ce3d020106082a8648ce3d030107034200"
+)
+
+var p256SpkiPrefix []byte
+
+func init() {
+	var err error
+	p256SpkiPrefix, err = decodeHex(p256SpkiPrefixHex)
+	if err != nil {
+		panic("invalid P256_SPKI_PREFIX: " + err.Error())
+	}
+}
+
+func decodeHex(s string) ([]byte, error) {
+	if len(s)%2 != 0 {
+		return nil, errors.New("odd length hex string")
+	}
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		var val byte
+		fmt.Sscanf(s[i:i+2], "%02x", &val)
+		b[i/2] = val
+	}
+	return b, nil
+}
+
+// VerifiedSenderIdentity holds the verified sender's SPKI and fingerprint
+type VerifiedSenderIdentity struct {
+	PublicKeySpki []byte
+	Fingerprint   string
+}
+
+// canonicalSpki converts raw X9.63 (65B) to SPKI; passes valid SPKI through
+func canonicalSpki(pubBytes []byte) []byte {
+	if len(pubBytes) == 65 && pubBytes[0] == 0x04 {
+		return append(p256SpkiPrefix, pubBytes...)
+	}
+	if len(pubBytes) > len(p256SpkiPrefix) {
+		if equalBytes(pubBytes[:len(p256SpkiPrefix)], p256SpkiPrefix) {
+			return pubBytes
+		}
+	}
+	return nil
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fingerprint(spki []byte) string {
+	sum := sha256.Sum256(spki)
+	const hex = "0123456789ABCDEF"
+	var sb strings.Builder
+	sb.Grow(len(sum) * 2)
+	for _, b := range sum {
+		sb.WriteByte(hex[b>>4])
+		sb.WriteByte(hex[b&0x0F])
+	}
+	return sb.String()
+}
+
+func signingPayload(sessionFingerprint string) []byte {
+	return []byte(identityPrefix + sessionFingerprint)
+}
+
+// verifyDeviceIdentity verifies a DEVICE_IDENTITY proof payload
+func verifyDeviceIdentity(proof []byte, sessionFingerprint string) *VerifiedSenderIdentity {
+	if len(proof) < 5 {
+		return nil
+	}
+	buf := proof
+	if buf[0] != identityVersion {
+		return nil
+	}
+	buf = buf[1:]
+	if len(buf) < 2 {
+		return nil
+	}
+	pubLen := int(binary.BigEndian.Uint16(buf[:2]))
+	buf = buf[2:]
+	if pubLen <= 0 || pubLen > len(buf) {
+		return nil
+	}
+	pubBytes := buf[:pubLen]
+	buf = buf[pubLen:]
+	if len(buf) < 2 {
+		return nil
+	}
+	sigLen := int(binary.BigEndian.Uint16(buf[:2]))
+	buf = buf[2:]
+	if sigLen <= 0 || sigLen != len(buf) {
+		return nil
+	}
+	sigBytes := buf[:sigLen]
+
+	spki := canonicalSpki(pubBytes)
+	if spki == nil {
+		return nil
+	}
+
+	// Parse SPKI to get ECDSA public key
+	pubKey, err := x509.ParsePKIXPublicKey(spki)
+	if err != nil {
+		return nil
+	}
+	ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil
+	}
+
+	// Verify signature
+	payload := signingPayload(sessionFingerprint)
+	hash := sha256.Sum256(payload)
+	var sigStruct struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sigBytes, &sigStruct); err != nil {
+		return nil
+	}
+	if !ecdsa.Verify(ecdsaPub, hash[:], sigStruct.R, sigStruct.S) {
+		return nil
+	}
+
+	return &VerifiedSenderIdentity{
+		PublicKeySpki: spki,
+		Fingerprint:   fingerprint(spki),
+	}
+}
 
 type CryptoSession struct {
 	mu          sync.RWMutex
@@ -176,7 +322,7 @@ func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 // Handshake auto-detects raw X9.63 (65B from iOS) vs X.509 SPKI (91B from Android).
 func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	curve := ecdh.P256()
-	localPriv, err := curve.GenerateKey(rand.Reader)
+	localPriv, err := curve.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +357,7 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	}
 
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	if _, err := cryptorand.Read(salt); err != nil {
 		return nil, err
 	}
 	derived := hkdfSHA256(shared, salt, []byte(kdfInfo), 32)
@@ -263,7 +409,7 @@ func (c *CryptoSession) Encrypt(plain, aad []byte) ([]byte, error) {
 		return nil, errors.New("session key not ready")
 	}
 	nonce := make([]byte, gcmNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := cryptorand.Read(nonce); err != nil {
 		return nil, err
 	}
 	ciphertext := aead.Seal(nil, nonce, plain, aad)
@@ -411,7 +557,6 @@ type AuditLogger struct {
 	maxSize    int64
 	logDir     string
 	mu         sync.Mutex
-	file       *os.File
 }
 
 // AuditEvent represents a security audit event
@@ -593,20 +738,29 @@ func (a *AntiReplayWindow) Accept(seq int) bool {
 }
 
 type SimulatorServer struct {
-	crypto          CryptoSession
-	reasm           *FrameReassembler
-	udpReplay       AntiReplayWindow
-	clientsMu       sync.Mutex
-	clients         map[*wsClient]struct{}
-	stateMu         sync.RWMutex
-	uiState         UIState
-	tcpOutMu        sync.Mutex
-	tcpOut          net.Conn
-	outSeq          atomic.Int32
-	framesWin       atomic.Int32
-	droppedWin      atomic.Int32
-	lastUdpSeq      atomic.Int32
-	failedHandshake atomic.Int32
+	crypto              CryptoSession
+	reasm               *FrameReassembler
+	udpReplay           AntiReplayWindow
+	clientsMu           sync.Mutex
+	clients             map[*wsClient]struct{}
+	stateMu             sync.RWMutex
+	uiState             UIState
+	tcpOutMu            sync.Mutex
+	tcpOut              net.Conn
+	outSeq              atomic.Int32
+	framesWin           atomic.Int32
+	droppedWin          atomic.Int32
+	lastUdpSeq          atomic.Int32
+	failedHandshake     atomic.Int32
+	trustStoreMu        sync.RWMutex
+	trustedSenders      map[string]bool // fingerprint -> trusted
+
+	// Exponential backoff + IP cooldown for failed handshakes
+	failedHandshakesPerIP   sync.Map // map[string]*atomic.Int32
+	ipCooldownUntil         sync.Map // map[string]int64 (unix ms)
+	maxBackoffMs            int64
+	baseBackoffMs           int64
+	maxFailedBeforeCooldown int32
 
 	// Security: Audit logging
 	auditLog *AuditLogger
@@ -616,8 +770,12 @@ type SimulatorServer struct {
 
 func NewSimulatorServer() *SimulatorServer {
 	return &SimulatorServer{
-		reasm:   NewFrameReassembler(),
-		clients: make(map[*wsClient]struct{}),
+		reasm:                   NewFrameReassembler(),
+		clients:                 make(map[*wsClient]struct{}),
+		trustedSenders:          make(map[string]bool),
+		maxBackoffMs:            60_000,
+		baseBackoffMs:           1_000,
+		maxFailedBeforeCooldown: 3,
 		uiState: UIState{
 			State:       "waiting",
 			IsLandscape: true,
@@ -835,11 +993,49 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	handshakeCompleted := false
 
+	// Exponential backoff + IP cooldown
+	remoteIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	nowMs := time.Now().UnixMilli()
+
+	// IP cooldown check
+	if cooldownVal, ok := s.ipCooldownUntil.Load(remoteIP); ok {
+		cooldownUntil := cooldownVal.(int64)
+		if nowMs < cooldownUntil {
+			waitMs := cooldownUntil - nowMs
+			log.Printf("Connection from %s rejected — IP cooldown active (%dms remaining)", remoteIP, waitMs)
+			_ = conn.Close()
+			return
+		}
+	}
+
+	// Exponential backoff with jitter based on per-IP failure count
+	ipFailuresVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+	ipFailures := ipFailuresVal.(*atomic.Int32).Load()
+	if ipFailures >= s.maxFailedBeforeCooldown {
+		backoffExp := int(ipFailures - s.maxFailedBeforeCooldown + 1)
+		backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+		if backoffMs > s.maxBackoffMs {
+			backoffMs = s.maxBackoffMs
+		}
+		// Add jitter: ±30%
+		jitter := int64(float64(backoffMs) * 0.3 * (rand.Float64()*2 - 1))
+		totalDelay := backoffMs + jitter
+		if totalDelay < 0 {
+			totalDelay = 0
+		}
+		log.Printf("Connection from %s delayed %dms (failures=%d)", remoteIP, totalDelay, ipFailures)
+		time.Sleep(time.Duration(totalDelay) * time.Millisecond)
+	}
+
 	phoneName := "BYD Phone"
 	mime := "video/avc"
 	isLandscape := true
 	lastSeq := 0
 	dimRe := regexp.MustCompile(`\d{3,4}x\d{3,4}`)
+
+	// DEVICE_IDENTITY tracking
+	pendingIdentityTrusted := false
+	sessionApproved := false
 
 	stopQos := make(chan struct{})
 	go func() {
@@ -921,6 +1117,44 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				Fingerprint: fp,
 				IsLandscape: isLandscape,
 			})
+		case opDeviceIdentity:
+			if !s.crypto.IsActive() {
+				log.Printf("DEVICE_IDENTITY received before encryption active")
+				goto done
+			}
+			verified := verifyDeviceIdentity(payload, s.crypto.fingerprint)
+			pin, fp := s.crypto.Info()
+			if verified != nil {
+				s.trustStoreMu.RLock()
+				pendingIdentityTrusted = s.trustedSenders[verified.Fingerprint]
+				s.trustStoreMu.RUnlock()
+				sessionApproved = pendingIdentityTrusted
+				state := "pairing"
+				if pendingIdentityTrusted {
+					state = "streaming"
+				}
+				s.broadcastJSON(UIState{
+					State:       state,
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					Mime:        mime,
+					IsLandscape: isLandscape,
+					FPS:         60,
+				})
+				log.Printf("DEVICE_IDENTITY verified: fingerprint=%s trusted=%v", verified.Fingerprint, pendingIdentityTrusted)
+			} else {
+				pendingIdentityTrusted = false
+				sessionApproved = false
+				s.broadcastJSON(UIState{
+					State:       "pairing",
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					IsLandscape: isLandscape,
+				})
+				log.Printf("DEVICE_IDENTITY verification failed")
+			}
 		case opCapabilitiesReq:
 			_ = dimRe.FindString(string(payload))
 			s.sendControl(conn, opCapabilitiesResp, []byte("1920x1080@60|H264"))
@@ -932,16 +1166,26 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			if len(payload) > 0 {
 				mime = string(payload)
 			}
-			_, fp := s.crypto.Info()
-			s.broadcastJSON(UIState{
-				State:       "streaming",
-				PhoneName:   phoneName,
-				Fingerprint: fp,
-				Mime:        mime,
-				IsLandscape: isLandscape,
-				FPS:         60,
-			})
-			s.sendControl(conn, opKeyframeRequest, nil)
+			pin, fp := s.crypto.Info()
+			if sessionApproved {
+				s.broadcastJSON(UIState{
+					State:       "streaming",
+					PhoneName:   phoneName,
+					Fingerprint: fp,
+					Mime:        mime,
+					IsLandscape: isLandscape,
+					FPS:         60,
+				})
+				s.sendControl(conn, opKeyframeRequest, nil)
+			} else {
+				s.broadcastJSON(UIState{
+					State:       "pairing",
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					IsLandscape: isLandscape,
+				})
+			}
 		case opOrientationChange:
 			isLandscape = len(payload) > 0 && payload[0] == 0x01
 			_, fp := s.crypto.Info()
@@ -968,6 +1212,20 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 done:
 	if !handshakeCompleted {
 		s.failedHandshake.Add(1)
+		// Record per-IP failure and set cooldown if threshold exceeded
+		ipFailsVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+		ipFails := ipFailsVal.(*atomic.Int32)
+		newFails := ipFails.Add(1)
+		if newFails >= s.maxFailedBeforeCooldown {
+			backoffExp := int(newFails - s.maxFailedBeforeCooldown + 1)
+			backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+			if backoffMs > s.maxBackoffMs*10 {
+				backoffMs = s.maxBackoffMs * 10 // up to 10 min cooldown
+			}
+			cooldownUntil := time.Now().UnixMilli() + backoffMs
+			s.ipCooldownUntil.Store(remoteIP, cooldownUntil)
+			log.Printf("IP %s placed in cooldown for %dms (failures=%d)", remoteIP, backoffMs, newFails)
+		}
 	}
 	close(stopQos)
 	s.tcpOutMu.Lock()

@@ -1,13 +1,17 @@
 package app.drivelink.receiver
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import app.drivelink.receiver.network.NsdServiceRegistrar
 import app.drivelink.receiver.protocol.BydReceiverServer
 import app.drivelink.receiver.ui.ReceiverScreen
 import kotlinx.coroutines.Dispatchers
@@ -17,27 +21,42 @@ import java.net.NetworkInterface
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var nsdRegistrar: NsdServiceRegistrar
-    private val server = BydReceiverServer()
+    private val server get() = (application as DriveLinkReceiverApp).server
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        nsdRegistrar = NsdServiceRegistrar(this)
-        nsdRegistrar.register(port = BydReceiverServer.CONTROL_PORT)
-        server.start(lifecycleScope)
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, DriveLinkReceiverService::class.java)
+        )
+        requestNotificationPermission()
 
         setContent {
             val state by server.state.collectAsState()
             val isMuted by server.isMuted.collectAsState()
+            val trustedSenders by server.trustedSenders.collectAsState()
             val localIps = remember(state) { resolveLocalIpv4Addresses() }
             ReceiverScreen(
                 state = state,
                 localIps = localIps,
                 isMuted = isMuted,
+                trustedSenders = trustedSenders,
                 onToggleMute = { server.toggleMute() },
+                onRemoveTrusted = { fingerprint -> server.removeTrustedSender(fingerprint) },
                 onDisconnect = {
                     lifecycleScope.launch(Dispatchers.IO) {
                         server.disconnectActiveSession()
+                    }
+                },
+                onApprove = { alwaysTrust -> server.approvePendingSession(alwaysTrust) },
+                onDeny = {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        server.denyPendingSession()
+                    }
+                },
+                onSetAlwaysTrust = { fingerprint, alwaysTrust ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        server.setTrustedSenderAlwaysTrust(fingerprint, alwaysTrust)
                     }
                 },
                 onSurfaceReady = { surface -> server.attachSurface(surface) },
@@ -50,10 +69,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        nsdRegistrar.unregister()
-        server.stop()
-        super.onDestroy()
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 47810)
     }
 
     private fun resolveLocalIpv4Addresses(): List<String> {

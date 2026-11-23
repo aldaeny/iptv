@@ -14,8 +14,22 @@ def require(condition, message):
 require(root.find('uses-sdk').get(key+'targetSdkVersion') == '34', 'unexpected target SDK')
 for perm in ['INTERNET','ACCESS_WIFI_STATE','WAKE_LOCK','CHANGE_WIFI_MULTICAST_STATE','ACCESS_NETWORK_STATE']:
     require('android.permission.'+perm in permissions, 'missing ' + perm)
-for perm in ['RECORD_AUDIO','FOREGROUND_SERVICE_MEDIA_PROJECTION','FOREGROUND_SERVICE']:
+for perm in ['RECORD_AUDIO','FOREGROUND_SERVICE_MEDIA_PROJECTION']:
     require(('android.permission.'+perm in permissions) == (label != 'Receiver'), 'incorrect ' + perm)
+# Both apps run a foreground service: the sender for MediaProjection, the receiver for mediaPlayback.
+require('android.permission.FOREGROUND_SERVICE' in permissions, 'missing FOREGROUND_SERVICE')
+receiver_service = services.get('app.drivelink.receiver.DriveLinkReceiverService')
+require((receiver_service is not None) == (label == 'Receiver'), 'receiver service mismatch')
+if receiver_service is not None:
+    kind = receiver_service.get(key+'foregroundServiceType', '')
+    try:
+        media_playback = int(kind, 0) == 0x2
+    except ValueError:
+        media_playback = kind == 'mediaPlayback'
+    require(media_playback and receiver_service.get(key+'exported') == 'false',
+            f'unsafe receiver service (type={kind!r}, exported={receiver_service.get(key+"exported")!r})')
+require(('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' in permissions) == (label == 'Receiver'),
+        'incorrect FOREGROUND_SERVICE_MEDIA_PLAYBACK')
 require(('android.permission.SYSTEM_ALERT_WINDOW' in permissions) == (label == 'FullTouch'), 'overlay permission mismatch')
 projection = services.get('app.drivelink.cast.service.MirrorForegroundService')
 require((projection is not None) == (label != 'Receiver'), 'projection service mismatch')

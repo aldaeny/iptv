@@ -85,6 +85,7 @@ jobs:
           python3 DriveLink/tests/verify_isolation.py
           python3 DriveLink/tests/verify_protocol.py
           python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
           node DriveLink/tests/crypto_fuzz_suite.mjs
       - name: Simulator UI wiring (real index.html, DOM/WebSocket stub)
         run: node DriveLink/tests/simulator_ui_wiring.mjs
@@ -120,7 +121,7 @@ jobs:
     # about the Android build (this gap let a non-compiling tree reach master).
     # Signing inputs stay workflow_dispatch-only, so a push run yields unsigned
     # diagnostic artifacts and can never publish.
-    if: github.event_name != 'push' || github.ref == 'refs/heads/master'
+    if: github.event_name != 'push' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/arena/')
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -186,6 +187,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check pyyaml
           python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
       - name: Assemble release variants, unit tests and lint for both projects
         run: |
           set -euo pipefail
@@ -246,6 +248,36 @@ jobs:
           if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
+      - name: Report Kotlin/Gradle errors as annotations
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/drivelink-logs/*.log; do
+            grep -E '(^e: |^w: .*error|error:|FAILURE: Build failed|Execution failed for task)' "$log"               | head -25 | while IFS= read -r line; do
+                  echo "::error title=Gradle $(basename "$log")::${line//$'\n'/ }"
+                done
+          done
+      - name: Report failing unit tests as annotations
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          failed = 0
+          for path in glob.glob('DriveLink/**/build/test-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for case in root.iter('testcase'):
+                  for bad in list(case.findall('failure')) + list(case.findall('error')):
+                      failed += 1
+                      name = f"{case.get('classname')}.{case.get('name')}"
+                      msg = (bad.get('message') or bad.text or '').strip().replace('\n', ' ')[:300]
+                      print(f"::error title=Unit test failed::{name}: {msg}")
+          if failed == 0:
+              print(f"::error title=Unit test task failed::No XML failure found (compile/setup failure?)")
+          print(f"FAILED_TEST_COUNT={failed}")
+          PY
       - name: Collect build logs
         if: always()
         run: |
@@ -326,7 +358,8 @@ jobs:
           exit 1
 
   ios:
-    if: github.event_name == 'workflow_dispatch'
+    # Unsigned IPA build on every push; signing/upload below stays dispatch-only.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     needs: verify
     runs-on: macos-15-intel
     timeout-minutes: 60
@@ -410,6 +443,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Sign, export and verify both iOS distribution IPAs
+        if: github.event_name == 'workflow_dispatch'
         env:
           DRIVELINK_APPLE_TEAM_ID: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
           DRIVELINK_IOS_SIGNER_SHA256: ${{ vars.DRIVELINK_IOS_SIGNER_SHA256 }}
@@ -422,6 +456,7 @@ jobs:
           DRIVELINK_IOS_PROFILE_FREE: ${{ secrets.DRIVELINK_IOS_PROFILE_FREE }}
         run: python3 DriveLink/tools/sign-ios.py
       - name: Upload verified distribution IPAs only
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: drivelink-ios-release-${{ github.sha }}
