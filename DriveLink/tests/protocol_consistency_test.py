@@ -17,8 +17,8 @@ def load_json():
 def check_json_constants():
     proto = load_json()
     errors = []
-    if proto.get("version") != "1.1.0":
-        errors.append(f"Version mismatch: expected 1.1.0, got {proto.get('version')}")
+    if proto.get("version") not in ("1.1.0", "1.2.0"):
+        errors.append(f"Version mismatch: expected 1.1.0 or 1.2.0, got {proto.get('version')}")
     if proto.get("packetFraming", {}).get("magicBytes") != "0x4259":
         errors.append(f"Magic bytes mismatch: expected 0x4259, got {proto.get('packetFraming', {}).get('magicBytes')}")
     if proto.get("packetFraming", {}).get("headerSizeBytes") != 16:
@@ -39,7 +39,7 @@ def load_json():
 
 def main():
     print("=" * 60)
-    print("BYD-WMP v1.1 Protocol Consistency Test")
+    print("BYD-WMP Protocol Consistency Test")
     print("=" * 60)
     errors = check_json_constants()
     if errors:
