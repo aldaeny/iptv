@@ -516,7 +516,6 @@ class BydReceiverServer(
                     OPCODE_SESSION_STOP -> break
                 }
             }
-        }
 
         if (!sessionActive) {
             failedHandshakes.incrementAndGet()
