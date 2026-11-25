@@ -3,7 +3,11 @@ name: DriveLink CI & Android Release Build
 on:
   workflow_dispatch:
   pull_request:
-    paths:
+         - name: Run Go simulator tests
+        run: |
+          go version
+          go env
+          go test -v ./DriveLink/simulator/...
       - "DriveLink/**"
       - ".github/workflows/drivelink-android-release.yml"
   push:
