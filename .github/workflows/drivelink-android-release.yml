@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
 
+jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -40,6 +41,9 @@ permissions:
           cache: false
       - name: Run Go simulator tests
         run: go test ./DriveLink/simulator/...
+
+  android:
+    if: github.event_name == 'workflow_dispatch'
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
