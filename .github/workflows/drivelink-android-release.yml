@@ -38,7 +38,9 @@ jobs:
         run: |
           go version
           go env
-          go test -v ./DriveLink/simulator/...
+          cd DriveLink/simulator
+          go mod download
+          go test -v ./...
 
   android:
     if: github.event_name == 'workflow_dispatch'
