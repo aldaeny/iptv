@@ -55,10 +55,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          printf '%s\n' "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 35
+          ndk-version: r27c
+          emulator: false
       - name: Verify identities and build Debug
         run: |
           python3 DriveLink/tests/verify_isolation.py
@@ -88,6 +90,26 @@ jobs:
           done
           umask 077
           export DRIVELINK_KEYSTORE_PATH
+          DRIVELINK_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/drivelink-key.XXXXXXXX")
+          trap 'rm -f -- "$DRIVELINK_KEYSTORE_PATH"' EXIT
+          printf '%s' "$DRIVELINK_KEYSTORE_BASE64" | base64 --decode > "$DRIVELINK_KEYSTORE_PATH"
+          unset DRIVELINK_KEYSTORE_BASE64
+          test -s "$DRIVELINK_KEYSTORE_PATH"
+          (cd DriveLink/android && ./gradlew --no-daemon :app:assembleStandardRelease :app:assembleFullTouchRelease)
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon :app:assembleRelease)
+          out=DriveLink/releases/v1.4.1/android
+          bash DriveLink/tools/verify-android-build.sh release DriveLink "$out"
+          {
+            printf '# DriveLink Android 1.4.1 — CI build\n\nCommit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Run: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'Debug and Release built. Package metadata, signatures and SHA-256 verified. Device installation and vehicle compatibility were not tested.\n'
+          } > "$out/BUILD_REPORT.md"
+      - name: Upload verified Release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-android-release-${{ github.sha }}
+          path: DriveLink/releases/v1.4.1/android/
+          if-no-files-found: error
           DRIVELINK_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/drivelink-key.XXXXXXXX")
           trap 'rm -f -- "$DRIVELINK_KEYSTORE_PATH"' EXIT
           printf '%s' "$DRIVELINK_KEYSTORE_BASE64" | base64 --decode > "$DRIVELINK_KEYSTORE_PATH"
