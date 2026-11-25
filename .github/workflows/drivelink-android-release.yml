@@ -1,110 +1,479 @@
 name: DriveLink CI & Android Release Build
 
+# Two paths:
+#  * pull_request / push (arena/**)  -> verification only (identity, protocol, crypto, syntax).
+#  * push (master)                   -> verification + full Android build, unit tests and lint
+#                                       (unsigned diagnostic artifacts; no signing, no publish).
+#  * workflow_dispatch               -> full build of Standard + FullTouch + Receiver APKs,
+#                                       signing + metadata verification, SHA-256 and iOS build.
+#
+# Release publication runs only in the separate, manually triggered
+# "DriveLink Publish Release" workflow, after a release run has been reviewed.
+
 on:
   workflow_dispatch:
+    inputs:
+      diagnostics_only:
+        description: Inspect the previous run without rebuilding or using signing inputs
+        type: boolean
+        default: false
+      previous_run:
+        description: Optional previous DriveLink run ID for emulator failure diagnosis
+        type: string
+        required: false
   pull_request:
     paths:
       - "DriveLink/**"
-      - ".github/workflows/drivelink-android-release.yml"
+      - ".github/workflows/drivelink-*.yml"
   push:
     branches:
       - "master"
       - "arena/**"
     paths:
       - "DriveLink/**"
-      - ".github/workflows/drivelink-android-release.yml"
+      - ".github/workflows/drivelink-*.yml"
 
 permissions:
   contents: read
 
+env:
+  # Pinned toolchain — keep in sync with DriveLink/android/gradle/wrapper and AGP.
+  GRADLE_VERSION: "8.10.2"
+  JAVA_VERSION: "17"
+  ANDROID_COMPILE_SDK: "35"
+  ANDROID_BUILD_TOOLS: "35.0.0"
+
 jobs:
-  verify:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' && inputs.previous_run != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Inspect the archived smoke-test step (no signing inputs)
+        env:
+          RUN_ID: ${{ inputs.previous_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ $RUN_ID =~ ^[0-9]{6,20}$ ]]
+          base="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          gh api "$base" | jq -e --arg repo "$GITHUB_REPOSITORY" '.head_repository.full_name == $repo and .path == ".github/workflows/drivelink-android-release.yml" and .event == "workflow_dispatch"' >/dev/null
+          gh api "$base/logs" > "$RUNNER_TEMP/run-logs.zip"
+          python3 DriveLink/ci/diagnose_emulator.py "$RUNNER_TEMP/run-logs.zip"
+  verify:
+    if: github.event_name != 'workflow_dispatch' || !inputs.diagnostics_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - name: Verify package identities, protocol parity and crypto fuzz suite
+      - name: Install verifier dependencies
+        run: python3 -m pip install --disable-pip-version-check pyyaml
+      - name: Package identity, protocol parity and crypto suite
         run: |
           set -o pipefail
+          python3 DriveLink/tests/test_ios_signing.py
           python3 DriveLink/tests/verify_isolation.py
           python3 DriveLink/tests/verify_protocol.py
+          python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
           node DriveLink/tests/crypto_fuzz_suite.mjs
-      - name: Verify Go simulator tests
+      - name: Simulator UI wiring (real index.html, DOM/WebSocket stub)
+        run: node DriveLink/tests/simulator_ui_wiring.mjs
+      - name: Publish guard self-test (stale/foreign/unsigned runs must be refused)
+        run: python3 DriveLink/tests/publish_guard_selftest.py
+      - name: Set up Go 1.22
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.22"
+          cache: false
+      - name: Go simulator unit tests (race detector) + reproducible binaries
         run: |
-          go version
-          go env
+          set -o pipefail
           cd DriveLink/simulator
-          go mod download
-          go test -v ./...
+          go vet ./...
+          go test -race -v ./... 2>&1 | tee ../../go-test.log
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/BydScreenSimulator-Windows.exe .
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/BydScreenSimulator-Linux .
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-verification-logs
+          path: |
+            go-test.log
+            /tmp/BydScreenSimulator-Windows.exe
+            /tmp/BydScreenSimulator-Linux
+          if-no-files-found: warn
+          retention-days: 30
 
   android:
-    if: github.event_name == 'workflow_dispatch'
+    # Run Android on master pushes too: a green `verify` on master proves nothing
+    # about the Android build (this gap let a non-compiling tree reach master).
+    # Signing inputs stay workflow_dispatch-only, so a push run yields unsigned
+    # diagnostic artifacts and can never publish.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/arena/')
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          printf '%s\n' "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
-      - name: Verify identities and build Debug
-        run: |
-          python3 DriveLink/tests/verify_isolation.py
-          python3 DriveLink/tests/verify_protocol.py
-          (cd DriveLink/android && ./gradlew --no-daemon :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest :app:lintStandardDebug :app:lintFullTouchDebug :app:assembleStandardDebug :app:assembleFullTouchDebug)
-          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug)
-          bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
-      - name: Upload verified Debug APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: drivelink-android-debug-${{ github.sha }}
-          path: ${{ runner.temp }}/drivelink-debug
-          if-no-files-found: error
-      - name: Build and verify signed Release
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}" "platform-tools"
+          printf '%s\n' "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}" >> "$GITHUB_PATH"
+      - name: Configure release keystore (optional)
+        id: signmode
         env:
-          DRIVELINK_KEYSTORE_BASE64: ${{ secrets.DRIVELINK_KEYSTORE_BASE64 }}
-          DRIVELINK_KEYSTORE_PASSWORD: ${{ secrets.DRIVELINK_KEYSTORE_PASSWORD }}
-          DRIVELINK_KEY_ALIAS: ${{ secrets.DRIVELINK_KEY_ALIAS }}
-          DRIVELINK_KEY_PASSWORD: ${{ secrets.DRIVELINK_KEY_PASSWORD }}
+          PIN: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
+          KEYSTORE_B64: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_BASE64 || '' }}
+          KEYSTORE_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_PASSWORD || '' }}
+          KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_ALIAS || '' }}
+          KEY_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_PASSWORD || '' }}
+        run: |
+          set -euo pipefail
+          # Report names only; values remain confined to signing steps.
+          for entry in KEYSTORE_B64:DRIVELINK_KEYSTORE_BASE64 KEYSTORE_PASS:DRIVELINK_KEYSTORE_PASSWORD KEY_ALIAS:DRIVELINK_KEY_ALIAS KEY_PASS:DRIVELINK_KEY_PASSWORD PIN:DRIVELINK_SIGNER_SHA256; do
+            key=${entry%:*}; name=${entry#*:}
+            if [[ -n ${!key} ]]; then echo "::notice::$name present"; else echo "::notice::BLOCKED $name unavailable"; fi
+          done
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ] || [ -z "$PIN" ]; then
+            echo "::warning::Incomplete signing inputs; diagnostic release APKs will be UNSIGNED and are not publishable."
+            echo "DRIVELINK_RELEASE_SIGNABLE=false" >> "$GITHUB_ENV"
+            # Unsigned output must never land in the publishable artifact name.
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          KEYSTORE_FILE="$RUNNER_TEMP/drivelink-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
+          test -s "$KEYSTORE_FILE"
+          pin=${PIN//:/}; pin=${pin,,}
+          [[ $pin =~ ^[0-9a-f]{64}$ ]] || { echo '::error::Invalid trusted Android signer fingerprint'; exit 1; }
+          cert=$(keytool -exportcert -keystore "$KEYSTORE_FILE" -storepass:env KEYSTORE_PASS -alias "$KEY_ALIAS" 2>/dev/null | sha256sum | cut -d' ' -f1) || { echo '::error::Cannot open configured keystore and alias'; exit 1; }
+          [[ $cert == "$pin" ]] || { echo '::error::Configured key is not the approved release identity'; exit 1; }
+          {
+            echo "DRIVELINK_KEYSTORE_PATH=$KEYSTORE_FILE"
+            echo "DRIVELINK_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
+            echo "DRIVELINK_KEY_ALIAS=$KEY_ALIAS"
+            echo "DRIVELINK_KEY_PASSWORD=$KEY_PASS"
+            echo "DRIVELINK_RELEASE_SIGNABLE=true"
+          } >> "$GITHUB_ENV"
+          echo "mode=release" >> "$GITHUB_OUTPUT"
+          echo "Release keystore configured from repository secrets."
+      - name: Re-run source release gate against the exact build commit
+        run: |
+          python3 -m pip install --disable-pip-version-check pyyaml
+          python3 DriveLink/tests/verify_release.py
+          python3 DriveLink/tests/verify_phase1_invariants.py
+      - name: Assemble release variants, unit tests and lint for both projects
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/drivelink-logs"; mkdir -p "$logs"
+          failed=0
+          (cd DriveLink/android && ./gradlew --continue --no-daemon --stacktrace \
+            :app:assembleStandardRelease :app:assembleFullTouchRelease \
+            :app:testStandardDebugUnitTest :app:testFullTouchDebugUnitTest \
+            :app:lintStandardDebug :app:lintFullTouchDebug) 2>&1 | tee "$logs/senders.log" || failed=1
+          (cd DriveLink/receiver-dilink && ./gradlew --continue --no-daemon --stacktrace \
+            :app:assembleRelease :app:testDebugUnitTest :app:lintDebug) 2>&1 | tee "$logs/receiver.log" || failed=1
+          exit "$failed"
+      - name: Verify packages, versions, signing and SHA-256
+        env:
           DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
         run: |
-          for name in DRIVELINK_KEYSTORE_BASE64 DRIVELINK_KEYSTORE_PASSWORD DRIVELINK_KEY_ALIAS DRIVELINK_KEY_PASSWORD DRIVELINK_SIGNER_SHA256; do
-            if [[ -z ${!name} ]]; then
-              echo "::error::Release blocked: missing $name. Debug APKs are not Release APKs."
-              exit 1
-            fi
+          set -o pipefail
+          if [ "$DRIVELINK_RELEASE_SIGNABLE" = "true" ]; then
+            bash DriveLink/tools/verify-android-build.sh release DriveLink "$RUNNER_TEMP/drivelink-release"
+          else
+            bash DriveLink/tools/verify-android-build.sh unsigned DriveLink "$RUNNER_TEMP/drivelink-release"
+          fi
+      - name: Build debug APKs (installable smoke-test artifacts)
+        run: |
+          set -o pipefail
+          (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardDebug :app:assembleFullTouchDebug)
+          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
+      - name: Smoke test release-signed APKs, or separately labelled debug APKs if unsigned
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image='system-images;android-35;google_apis;x86_64'
+          "$tools/sdkmanager" emulator "$image"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/drivelink-android-user"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd -n drivelink-test -k "$image"
+          test -s "$ANDROID_AVD_HOME/drivelink-test.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx drivelink-test
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          adb start-server
+          adb devices -l
+          args=()
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then args+=(-accel off); fi
+          "$ANDROID_HOME/emulator/emulator" "${args[@]}" -avd drivelink-test -port 5554 -skin 480x800 -no-boot-anim -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          deadline=$((SECONDS + 900))
+          until [[ $(timeout 8s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
+            if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then echo "::error::Emulator exited or boot deadline reached; KVM fallback=${args[*]:-none}"; tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
+            sleep 3
           done
-          umask 077
-          export DRIVELINK_KEYSTORE_PATH
-          DRIVELINK_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/drivelink-key.XXXXXXXX")
-          trap 'rm -f -- "$DRIVELINK_KEYSTORE_PATH"' EXIT
-          printf '%s' "$DRIVELINK_KEYSTORE_BASE64" | base64 --decode > "$DRIVELINK_KEYSTORE_PATH"
-          unset DRIVELINK_KEYSTORE_BASE64
-          test -s "$DRIVELINK_KEYSTORE_PATH"
-          (cd DriveLink/android && ./gradlew --no-daemon :app:assembleStandardRelease :app:assembleFullTouchRelease)
-          (cd DriveLink/receiver-dilink && ./gradlew --no-daemon :app:assembleRelease)
-          out=DriveLink/releases/v1.4.1/android
-          bash DriveLink/tools/verify-android-build.sh release DriveLink "$out"
-          {
-            printf '# DriveLink Android 1.4.1 — CI build\n\nCommit: `%s`\n\n' "$GITHUB_SHA"
-            printf 'Run: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-            printf 'Debug and Release built. Package metadata, signatures and SHA-256 verified. Device installation and vehicle compatibility were not tested.\n'
-          } > "$out/BUILD_REPORT.md"
-      - name: Upload verified Release APKs
-        uses: actions/upload-artifact@v4
+          dir="$RUNNER_TEMP/drivelink-debug"
+          if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
+          bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
+          while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
+      - name: Report Kotlin/Gradle errors as annotations
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/drivelink-logs/*.log; do
+            grep -E '(^e: |^w: .*error|error:|FAILURE: Build failed|Execution failed for task)' "$log"               | head -25 | while IFS= read -r line; do
+                  echo "::error title=Gradle $(basename "$log")::${line//$'\n'/ }"
+                done
+          done
+      - name: Report failing unit tests as annotations
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          failed = 0
+          for path in glob.glob('DriveLink/**/build/test-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for case in root.iter('testcase'):
+                  for bad in list(case.findall('failure')) + list(case.findall('error')):
+                      failed += 1
+                      name = f"{case.get('classname')}.{case.get('name')}"
+                      msg = (bad.get('message') or bad.text or '').strip().replace('\n', ' ')[:300]
+                      print(f"::error title=Unit test failed::{name}: {msg}")
+          if failed == 0:
+              print(f"::error title=Unit test task failed::No XML failure found (compile/setup failure?)")
+          print(f"FAILED_TEST_COUNT={failed}")
+          PY
+      - name: Collect build logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/drivelink-logs"
+          [[ ! -f "$RUNNER_TEMP/emulator.log" ]] || cp "$RUNNER_TEMP/emulator.log" "$RUNNER_TEMP/drivelink-logs"
+          find "$RUNNER_TEMP"/drivelink-{release,unsigned,debug} -maxdepth 1 \( -name "*-AndroidManifest.xml" -o -name "SIGNING_REPORT.md" -o -name "SHA256SUMS.txt" \) -exec cp --parents {} "$RUNNER_TEMP/drivelink-logs" \; 2>/dev/null || true
+          shopt -s globstar nullglob
+          python3 DriveLink/ci/annotate_errors.py "$RUNNER_TEMP"/drivelink-logs/*.log DriveLink/**/lint-results*.txt
+          find DriveLink -name "lint-results*.txt" -o -name "lint-results*.html" | while read -r f; do
+            cp --parents "$f" "$RUNNER_TEMP/drivelink-logs" || true
+          done
+      - name: Record actual APK metadata even if another target failed
+        if: always()
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for apk in DriveLink/**/outputs/apk/**/release/*.apk; do
+            unzip -tq "$apk" >/dev/null
+            pkg=$(aapt dump badging "$apk" | sed -n '/^package:/p')
+            digest=$(sha256sum "$apk" | cut -d' ' -f1)
+            printf '::notice::%s %s bytes SHA-256 %s %s\n' "$apk" "$(stat -c %s "$apk")" "$digest" "$pkg"
+          done
+      - name: Retain non-publishable outputs from a failed native gate
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: drivelink-android-release-${{ github.sha }}
-          path: DriveLink/releases/v1.4.1/android/
+          name: drivelink-diagnostics-${{ github.sha }}
+          path: DriveLink/**/outputs/apk/**/release/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Assert the release artifact set is complete before uploading
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/drivelink-release"
+          for f in DriveLink-Standard.apk DriveLink-FullTouch.apk DriveLink-Receiver.apk SHA256SUMS.txt SIGNING_REPORT.md; do
+            [[ -s "$d/$f" ]] || { echo "missing or empty release artifact: $f" >&2; exit 1; }
+          done
+          [[ $(find "$d" -maxdepth 1 -name '*.apk' | wc -l) -eq 3 ]] || { echo "expected exactly 3 APKs" >&2; exit 1; }
+          (cd "$d" && sha256sum -c SHA256SUMS.txt)
+          ls -l "$d"
+      - name: Upload release artifacts (APK + SIGNING_REPORT + SHA256SUMS)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # Explicit file list: never upload the whole directory (the iOS "Payload/"
+          # bug taught us that globs and prefixes are fragile). Signed builds only
+          # ever land under drivelink-release-<sha>; keystore-less builds are
+          # quarantined as drivelink-unsigned-<sha>, which publish refuses.
+          name: drivelink-${{ steps.signmode.outputs.mode }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/drivelink-release/DriveLink-Standard.apk
+            ${{ runner.temp }}/drivelink-release/DriveLink-FullTouch.apk
+            ${{ runner.temp }}/drivelink-release/DriveLink-Receiver.apk
+            ${{ runner.temp }}/drivelink-release/SHA256SUMS.txt
+            ${{ runner.temp }}/drivelink-release/SIGNING_REPORT.md
+            ${{ runner.temp }}/drivelink-release/DEVICE_TEST.txt
           if-no-files-found: error
+          retention-days: 90
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-debug-${{ github.sha }}
+          path: ${{ runner.temp }}/drivelink-debug/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-android-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/drivelink-logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Require an approved signer for release eligibility
+        if: github.event_name == 'workflow_dispatch' && steps.signmode.outputs.mode == 'unsigned'
+        run: |
+          echo '::error::BLOCKED Android distribution signing. Unsigned and debug artifacts are diagnostic only.'
+          exit 1
+
+  ios:
+    # Unsigned IPA build on every push; signing/upload below stays dispatch-only.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    needs: verify
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit Apple signing availability without logging credentials
+        env:
+          TEAM: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          identities=$(security find-identity -v -p codesigning | awk '/"(Apple Distribution|iPhone Distribution):/{n++} END{print n+0}')
+          shopt -s nullglob
+          profiles=("$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision)
+          [[ -n $TEAM ]] && team=present || team=unavailable
+          echo "::notice::Apple team setting=$team; distribution identities=$identities; installed profiles=${#profiles[@]}"
+      - name: Swift package tests
+        run: |
+          set -o pipefail
+          cd DriveLink/ios && swift test 2>&1 | tee swift-test.log
+      - name: Install XcodeGen
+        if: ${{ !cancelled() }}
+        run: brew install xcodegen
+      - name: Build Full (unsigned) + package IPA
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          cd DriveLink/ios
+          xcodegen generate --spec Project.yml
+          xcodebuild -project BydWirelessMirror.xcodeproj -scheme BydWirelessMirror \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build-full CODE_SIGNING_ALLOWED=NO build 2>&1 | tee xcodebuild-full.log
+          mkdir -p "$RUNNER_TEMP/drivelink-ios/Payload"
+          cp -R build-full/Build/Products/Release-iphoneos/BydWirelessMirror.app "$RUNNER_TEMP/drivelink-ios/Payload/"
+          (cd "$RUNNER_TEMP/drivelink-ios" && zip -qry DriveLink-Full-unsigned.ipa Payload)
+      - name: Build Free Sideload (unsigned) + package IPA
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          cd DriveLink/ios
+          xcodegen generate --spec Project-free.yml
+          xcodebuild -project BydWirelessMirrorFree.xcodeproj -scheme BydWirelessMirror \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build-free CODE_SIGNING_ALLOWED=NO build 2>&1 | tee xcodebuild-free.log
+          mkdir -p "$RUNNER_TEMP/drivelink-ios/Payload"
+          rm -rf "$RUNNER_TEMP/drivelink-ios/Payload/"*
+          cp -R build-free/Build/Products/Release-iphoneos/BydWirelessMirror.app "$RUNNER_TEMP/drivelink-ios/Payload/"
+          (cd "$RUNNER_TEMP/drivelink-ios" && zip -qry DriveLink-Free-unsigned.ipa Payload)
+      - name: Verify IPA metadata and checksum
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/drivelink-ios"
+          rm -rf Payload
+          # Explicit ipa -> bundle id map. The previous "app.drivelink.cast.app${ipa#DriveLink-Full}"
+          # evaluated to app.drivelink.cast.app-unsigned.ipa (suffix stripping, not a prefix match),
+          # which could never match a real Info.plist identifier.
+          while read -r ipa expected_id; do
+            [[ -f $ipa ]] || { echo "missing $ipa" >&2; exit 1; }
+            unzip -q "$ipa" -d "check-${ipa%.ipa}"
+            plist="check-${ipa%.ipa}/Payload/BydWirelessMirror.app/Info.plist"
+            [[ -f $plist ]] || { echo "missing $plist inside $ipa" >&2; exit 1; }
+            actual_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")
+            echo "$ipa: $actual_id"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" | grep -Fx 1.4.1
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist" | grep -Fx 3
+            [[ $actual_id == "$expected_id" ]] || { echo "$ipa: bundle id $actual_id != $expected_id" >&2; exit 1; }
+          done <<'MAP'
+          DriveLink-Full-unsigned.ipa app.drivelink.cast.app
+          DriveLink-Free-unsigned.ipa app.drivelink.cast.app.free
+          MAP
+          shasum -a 256 ./*.ipa > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload unsigned iOS IPAs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-ios-unsigned-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/drivelink-ios/*.ipa
+            ${{ runner.temp }}/drivelink-ios/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Sign, export and verify both iOS distribution IPAs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DRIVELINK_APPLE_TEAM_ID: ${{ vars.DRIVELINK_APPLE_TEAM_ID }}
+          DRIVELINK_IOS_SIGNER_SHA256: ${{ vars.DRIVELINK_IOS_SIGNER_SHA256 }}
+          DRIVELINK_IOS_EXPORT_METHOD: ${{ vars.DRIVELINK_IOS_EXPORT_METHOD }}
+          DRIVELINK_IOS_P12_BASE64: ${{ secrets.DRIVELINK_IOS_P12_BASE64 }}
+          DRIVELINK_IOS_P12_PASSWORD: ${{ secrets.DRIVELINK_IOS_P12_PASSWORD }}
+          DRIVELINK_IOS_PROFILE_FULL: ${{ secrets.DRIVELINK_IOS_PROFILE_FULL }}
+          DRIVELINK_IOS_PROFILE_BROADCAST: ${{ secrets.DRIVELINK_IOS_PROFILE_BROADCAST }}
+          DRIVELINK_IOS_PROFILE_WIDGET: ${{ secrets.DRIVELINK_IOS_PROFILE_WIDGET }}
+          DRIVELINK_IOS_PROFILE_FREE: ${{ secrets.DRIVELINK_IOS_PROFILE_FREE }}
+        run: python3 DriveLink/tools/sign-ios.py
+      - name: Upload verified distribution IPAs only
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: drivelink-ios-release-${{ github.sha }}
+          path: ${{ runner.temp }}/drivelink-ios-signed/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Annotate native compiler diagnostics
+        if: failure()
+        run: python3 DriveLink/ci/annotate_errors.py DriveLink/ios/*.log
+      - name: Upload iOS build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-ios-logs-${{ github.sha }}
+          path: |
+            DriveLink/ios/swift-test.log
+            DriveLink/ios/xcodebuild-full.log
+            DriveLink/ios/xcodebuild-free.log
+          if-no-files-found: warn
+          retention-days: 30
