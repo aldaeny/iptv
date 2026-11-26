@@ -49,8 +49,12 @@ public final class SharedSessionStore: @unchecked Sendable {
     public func loadTargetEndpoint() -> (id: String, host: String, controlPort: UInt16, mediaPort: UInt16, name: String) {
         let id = defaults.string(forKey: Keys.deviceId) ?? "byd-default"
         let host = defaults.string(forKey: Keys.host) ?? "192.168.49.1"
-        let cPort = UInt16(defaults.integer(forKey: Keys.controlPort) > 0 ? defaults.integer(forKey: Keys.controlPort) : 47810)
-        let mPort = UInt16(defaults.integer(forKey: Keys.mediaPort) > 0 ? defaults.integer(forKey: Keys.mediaPort) : 47811)
+        func port(_ key: String, fallback: UInt16) -> UInt16 {
+            guard let value = UInt16(exactly: defaults.integer(forKey: key)), value != 0 else { return fallback }
+            return value
+        }
+        let cPort = port(Keys.controlPort, fallback: 47810)
+        let mPort = port(Keys.mediaPort, fallback: 47811)
         let name = defaults.string(forKey: Keys.deviceName) ?? "BYD DiLink"
         return (id, host, cPort, mPort, name)
     }
@@ -68,7 +72,10 @@ public final class SharedSessionStore: @unchecked Sendable {
         return parsed
     }
 
+    public var confirmedFingerprint: String? { defaults.string(forKey: "drivelink.confirmedFingerprint") }
+
     public func savePairingVerification(pin: String, fingerprint: String) {
+        defaults.removeObject(forKey: "drivelink.confirmedFingerprint")
         defaults.set(pin, forKey: Keys.pairingPin)
         defaults.set(fingerprint, forKey: Keys.fingerprint)
         postDarwinNotification(Self.pairingUpdatedNotification)
@@ -82,10 +89,11 @@ public final class SharedSessionStore: @unchecked Sendable {
         return (pin, fp)
     }
 
-    public func confirmPairingAndNotify(deviceId: String) {
+    public func confirmPairingAndNotify(deviceId: String, fingerprint: String) {
         var ids = Set(defaults.stringArray(forKey: Keys.trustedDeviceIds) ?? [])
         ids.insert(deviceId)
         defaults.set(Array(ids), forKey: Keys.trustedDeviceIds)
+        defaults.set(fingerprint, forKey: "drivelink.confirmedFingerprint")
         postDarwinNotification(Self.pairingConfirmedNotification)
     }
 

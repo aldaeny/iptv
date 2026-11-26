@@ -38,10 +38,34 @@ export function isURI(string: string): boolean {
   }
 }
 
+// Sorts the query parameters like URLSearchParams.sort(), but keeps each one as written, so
+// escapes like %26, %3D and %2B are not decoded the way normalize-url's own sorting does
+function sortQueryParameters(url: string): string {
+  const queryStart = url.indexOf('?')
+  if (queryStart === -1) return url
+  const hashStart = url.indexOf('#', queryStart)
+  const queryEnd = hashStart === -1 ? url.length : hashStart
+  const getName = (param: string) => new URLSearchParams(param).keys().next().value ?? ''
+  const params = url
+    .slice(queryStart + 1, queryEnd)
+    .split('&')
+    .filter(Boolean)
+    .map(param => ({ param, name: getName(param) }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(({ param }) => param)
+  const query = params.length ? `?${params.join('&')}` : ''
+
+  return url.slice(0, queryStart) + query + url.slice(queryEnd)
+}
+
 export function normalizeURL(url: string): string {
+  // decodeURI, here and inside normalize-url, would turn %25 into a bare "%", so it is swapped
+  // for a placeholder that is put back once the link is decoded
   let normalized: string
   try {
-    normalized = normalizeUrl(url, { stripWWW: false })
+    normalized = sortQueryParameters(
+      normalizeUrl(url.replace(/%25/gi, '\uE000'), { stripWWW: false, sortQueryParameters: false })
+    )
   } catch {
     return url.replace(/\s/g, '+')
   }
@@ -53,6 +77,7 @@ export function normalizeURL(url: string): string {
   } catch {
     decoded = normalized
   }
+  decoded = decoded.replace(/\uE000|%EE%80%80/gi, '%25')
 
   // "+" means a space only in the query; in the path it is a plus sign
   const queryStart = decoded.indexOf('?')

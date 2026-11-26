@@ -269,8 +269,8 @@ public final class MirrorViewModel: ObservableObject {
                 pairedAtEpoch: Date().timeIntervalSince1970
             )
         )
-        sharedStore.confirmPairingAndNotify(deviceId: prompt.device.id)
-        directSession.confirmPairingAndStartStream()
+        sharedStore.confirmPairingAndNotify(deviceId: prompt.device.id, fingerprint: prompt.fingerprint)
+        directSession.confirmPairingAndStartStream(fingerprint: prompt.fingerprint)
         trustedVehicles = trustedStore.loadAll()
         pendingPairing = nil
     }
@@ -328,8 +328,7 @@ public final class MirrorViewModel: ObservableObject {
                 let vm = Unmanaged<MirrorViewModel>.fromOpaque(observerPtr).takeUnretainedValue()
                 Task { @MainActor in
                     guard let verification = vm.sharedStore.loadPairingVerification(),
-                          let device = vm.selectedDevice,
-                          !vm.isTrusted(deviceId: device.id) else {
+                          let device = vm.selectedDevice else {
                         return
                     }
                     vm.pendingPairing = PairingPrompt(

@@ -43,6 +43,11 @@ def main():
     assert opcodes["KEYFRAME_REQUEST"] == 0x12
     assert opcodes["VIDEO_NALU_FRAG"] == 0x13
     assert opcodes["TOUCH_EVENT"] == 0x14
+    assert opcodes["DEVICE_IDENTITY"] == 0x0A
+    assert proto["wireVersion"] == 1
+    assert proto["security"]["approvalRequired"] is True
+    assert proto["security"]["deviceIdentity"]["attestation"] is False
+    assert proto["sessionLifecycle"]["decodeBeforeApproval"] is False
 
     # 1. Validate XML / Plist / Entitlements
     xml_files = sorted(ROOT.rglob("*.xml")) + sorted(ROOT.rglob("*.plist")) + sorted(ROOT.rglob("*.entitlements"))

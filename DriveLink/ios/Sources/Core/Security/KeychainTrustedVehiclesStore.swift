@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public struct TrustedVehicle: Codable, Equatable, Sendable {
     public let id: String
@@ -15,15 +14,22 @@ public struct TrustedVehicle: Codable, Equatable, Sendable {
     }
 }
 
-/// Persists verified BYD vehicles in the iOS Keychain (shared via App Group when configured).
+/// Persists verified BYD vehicles in the App Group.
+///
+/// This type used to write to the Keychain with an App Group identifier passed as
+/// `kSecAttrAccessGroup`. That is not a Keychain access group (it needs a dedicated entitlement),
+/// so reads could silently return nothing and the extension could not see the app's list. The
+/// records contain only public ids/fingerprints, so an App Group `UserDefaults` store is the
+/// correct shared container. The initializer keeps its `accessGroup` parameter for source
+/// compatibility but deliberately ignores it.
 public final class KeychainTrustedVehiclesStore: @unchecked Sendable {
 
-    private let service = "app.drivelink.cast.trusted-vehicles"
-    private let account = "vehicles-list"
-    private let accessGroup: String?
+    private let defaults: UserDefaults
+    private let key = "drivelink.trusted.vehicles.v2"
 
     public init(accessGroup: String? = nil) {
-        self.accessGroup = accessGroup
+        _ = accessGroup
+        self.defaults = UserDefaults(suiteName: SharedSessionStore.appGroupId) ?? .standard
     }
 
     public func save(_ vehicle: TrustedVehicle) {
@@ -37,42 +43,19 @@ public final class KeychainTrustedVehiclesStore: @unchecked Sendable {
     }
 
     public func loadAll() -> [TrustedVehicle] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        if let accessGroup {
-            query[kSecAttrAccessGroup as String] = accessGroup
-        }
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
+        guard let data = defaults.data(forKey: key),
+              let list = try? JSONDecoder().decode([TrustedVehicle].self, from: data) else {
             return []
         }
-        return (try? JSONDecoder().decode([TrustedVehicle].self, from: data)) ?? []
+        return list.sorted { $0.displayName < $1.displayName }
     }
 
     public func remove(deviceId: String) {
-        let updated = loadAll().filter { $0.id != deviceId }
-        persist(updated)
+        persist(loadAll().filter { $0.id != deviceId })
     }
 
     private func persist(_ list: [TrustedVehicle]) {
         guard let data = try? JSONEncoder().encode(list) else { return }
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        if let accessGroup {
-            query[kSecAttrAccessGroup as String] = accessGroup
-        }
-        SecItemDelete(query as CFDictionary)
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        SecItemAdd(addQuery as CFDictionary, nil)
+        defaults.set(data, forKey: key)
     }
 }

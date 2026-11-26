@@ -28,7 +28,7 @@
 | ملحقات iOS | `app.drivelink.cast.app.broadcast`, `app.drivelink.cast.app.liveactivity` |
 | App Group مشترك | `group.app.drivelink.cast.shared` |
 | متغيرات توقيع Android | `DRIVELINK_KEYSTORE_PATH` / `_PASSWORD` / `DRIVELINK_KEY_ALIAS` / `DRIVELINK_KEY_PASSWORD` |
-| البروتوكول | `BYD-WMP v1.0` — TCP `47810`، UDP `47811`، منارة الاكتشاف UDP `47813`، خدمة Bonjour `_byd-mirror._tcp.` |
+| البروتوكول | `BYD-WMP v1.2.0` (wire `0x01`) — TCP `47810`، UDP `47811`، منارة الاكتشاف UDP `47813`، خدمة Bonjour `_byd-mirror._tcp.` |
 
 > أسماء البروتوكول والخدمات (`BYD-WMP`, `_byd-mirror._tcp.`, معرّفات الحزم الأصلية) بقيت كما هي عمداً
 > للحفاظ على التوافق مع شاشات BYD DiLink الحقيقية؛ التوحيد طال الشيفرة والمسارات والهوية التحريرية فقط.
@@ -40,6 +40,8 @@
 ```sh
 python3 DriveLink/tests/verify_isolation.py    # الحزم والملحقات وApp Group وتوقيع الإصدار
 python3 DriveLink/tests/verify_protocol.py     # ثوابت البروتوكول والتكافؤ بين المنصات والفريمينج
+python3 DriveLink/tests/verify_release.py      # بوابات الإصدار المصدرية (DSL، موارد، imports، iOS، منافذ)
+python3 DriveLink/tests/verify_phase1_invariants.py  # الجلسة، القدرات، الـencoder، اللمس، الموافقة، الهوية
 node    DriveLink/tests/crypto_fuzz_suite.mjs  # التشفير والـ fuzz وتجربة loopback حيّة (TCP/UDP + WebCodecs)
 cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
 ```
@@ -54,9 +56,9 @@ cd DriveLink/simulator && go test -race ./...  # اختبارات المحاكي
 - **iOS:** يلزم macOS + Xcode + XcodeGen: `cd DriveLink/ios && xcodegen generate --spec Project.yml`
   ثم `xcodebuild -scheme BydWirelessMirror -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`.
   راجع [دليل البناء](docs/BUILD_GUIDE.md) و[دليل iOS](docs/IOS_GUIDE.md).
-- **المحاكي:** `cd DriveLink/simulator && go run .` ثم افتح `http://127.0.0.1:47812` على نفس الجهاز.
+- **المحاكي:** `cd DriveLink/simulator && go run .` ثم افتح `http://127.0.0.1:47812` على نفس الجهاز. واجهة الويب والتحكم باللمس محليان؛ لا تُفتح قواعد جدار حماية Windows تلقائياً. عند موافقة مسؤول الجهاز يمكنه ضبط القواعد أو تفعيل الإعداد الاختياري `DRIVELINK_CONFIGURE_FIREWALL=1`.
 - **CI:** `.github/workflows/drivelink-android-release.yml` — مهمة `verify` تعمل عند كل PR/دفعة تخص
   `DriveLink/**`، ومهمة `android` (بناء وتوقيع والتحقق من APK) تُشغَّل يدوياً عبر `workflow_dispatch`.
 
 لم تُنتج APK أو IPA في هذه البيئة، ولم يُنفَّذ بناء Android/iOS هنا؛ التفاصيل في
-[releases/v1.4.1/BUILD_REPORT.md](releases/v1.4.1/BUILD_REPORT.md) و[release-delivery/](release-delivery/).
+[releases/v1.4.1/FINAL_VALIDATION_REPORT.md](releases/v1.4.1/FINAL_VALIDATION_REPORT.md) و[release-delivery/](release-delivery/).

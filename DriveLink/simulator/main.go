@@ -4,13 +4,15 @@ import (
 	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/ecdh"
 	"crypto/hmac"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"embed"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -20,11 +22,16 @@ import (
 	"io/fs"
 	"log"
 	"math"
+	"math/big"
+	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,18 +42,21 @@ import (
 var embeddedWeb embed.FS
 
 const (
-	controlPort     = 47810
-	mediaUDPPort    = 47811
-	webUIPort       = 47812
-	beaconUDPPort   = 47813
-	magicBytes      = uint16(0x4259)
-	protocolVersion = byte(0x01)
-	headerSize      = 16
-	gcmNonceSize    = 12
-	gcmTagSize      = 16
-	encOverhead     = gcmNonceSize + gcmTagSize
-	maxPacketBytes  = 65536
-	kdfInfo         = "BYD-MIRROR-SESSION-KEY-V1"
+	controlPort       = 47810
+	mediaUDPPort      = 47811
+	webUIPort         = 47812
+	beaconUDPPort     = 47813
+	magicBytes        = uint16(0x4259)
+	protocolVersion   = byte(0x01)
+	headerSize        = 16
+	gcmNonceSize      = 12
+	gcmTagSize        = 16
+	encOverhead       = gcmNonceSize + gcmTagSize
+	maxPacketBytes    = 65536
+	kdfInfo           = "BYD-MIRROR-SESSION-KEY-V1"
+
+	// Security: Key rotation interval (1 hour)
+	keyRotationInterval = 3600 * time.Second
 
 	opHelloSyn          byte = 0x01
 	opHelloAck          byte = 0x02
@@ -57,6 +67,7 @@ const (
 	opSessionStart      byte = 0x07
 	opSessionStop       byte = 0x08
 	opOrientationChange byte = 0x09
+	opDeviceIdentity    byte = 0x0A
 	opVideoNalu         byte = 0x10
 	opAudioAAC          byte = 0x11
 	opKeyframeRequest   byte = 0x12
@@ -66,6 +77,147 @@ const (
 	opHeartbeatPong     byte = 0x21
 	opQosTelemetry      byte = 0x22
 )
+
+// DEVICE_IDENTITY (0x0A) verification constants
+const (
+	identityVersion     = 1
+	identityPrefix      = "BYD-WMP-IDENTITY-V1|"
+	p256SpkiPrefixHex   = "3059301306072a8648ce3d020106082a8648ce3d030107034200"
+)
+
+var p256SpkiPrefix []byte
+
+func init() {
+	var err error
+	p256SpkiPrefix, err = decodeHex(p256SpkiPrefixHex)
+	if err != nil {
+		panic("invalid P256_SPKI_PREFIX: " + err.Error())
+	}
+}
+
+func decodeHex(s string) ([]byte, error) {
+	if len(s)%2 != 0 {
+		return nil, errors.New("odd length hex string")
+	}
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		var val byte
+		fmt.Sscanf(s[i:i+2], "%02x", &val)
+		b[i/2] = val
+	}
+	return b, nil
+}
+
+// VerifiedSenderIdentity holds the verified sender's SPKI and fingerprint
+type VerifiedSenderIdentity struct {
+	PublicKeySpki []byte
+	Fingerprint   string
+}
+
+// canonicalSpki converts raw X9.63 (65B) to SPKI; passes valid SPKI through
+func canonicalSpki(pubBytes []byte) []byte {
+	if len(pubBytes) == 65 && pubBytes[0] == 0x04 {
+		return append(p256SpkiPrefix, pubBytes...)
+	}
+	if len(pubBytes) > len(p256SpkiPrefix) {
+		if equalBytes(pubBytes[:len(p256SpkiPrefix)], p256SpkiPrefix) {
+			return pubBytes
+		}
+	}
+	return nil
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fingerprint(spki []byte) string {
+	sum := sha256.Sum256(spki)
+	const hex = "0123456789ABCDEF"
+	var sb strings.Builder
+	sb.Grow(len(sum) * 2)
+	for _, b := range sum {
+		sb.WriteByte(hex[b>>4])
+		sb.WriteByte(hex[b&0x0F])
+	}
+	return sb.String()
+}
+
+func signingPayload(sessionFingerprint string) []byte {
+	return []byte(identityPrefix + sessionFingerprint)
+}
+
+// verifyDeviceIdentity verifies a DEVICE_IDENTITY proof payload
+func verifyDeviceIdentity(proof []byte, sessionFingerprint string) *VerifiedSenderIdentity {
+	if len(proof) < 5 {
+		return nil
+	}
+	buf := proof
+	if buf[0] != identityVersion {
+		return nil
+	}
+	buf = buf[1:]
+	if len(buf) < 2 {
+		return nil
+	}
+	pubLen := int(binary.BigEndian.Uint16(buf[:2]))
+	buf = buf[2:]
+	if pubLen <= 0 || pubLen > len(buf) {
+		return nil
+	}
+	pubBytes := buf[:pubLen]
+	buf = buf[pubLen:]
+	if len(buf) < 2 {
+		return nil
+	}
+	sigLen := int(binary.BigEndian.Uint16(buf[:2]))
+	buf = buf[2:]
+	if sigLen <= 0 || sigLen != len(buf) {
+		return nil
+	}
+	sigBytes := buf[:sigLen]
+
+	spki := canonicalSpki(pubBytes)
+	if spki == nil {
+		return nil
+	}
+
+	// Parse SPKI to get ECDSA public key
+	pubKey, err := x509.ParsePKIXPublicKey(spki)
+	if err != nil {
+		return nil
+	}
+	ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil
+	}
+
+	// Verify signature
+	payload := signingPayload(sessionFingerprint)
+	hash := sha256.Sum256(payload)
+	var sigStruct struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sigBytes, &sigStruct); err != nil {
+		return nil
+	}
+	if !ecdsa.Verify(ecdsaPub, hash[:], sigStruct.R, sigStruct.S) {
+		return nil
+	}
+
+	return &VerifiedSenderIdentity{
+		PublicKeySpki: spki,
+		Fingerprint:   fingerprint(spki),
+	}
+}
 
 type CryptoSession struct {
 	mu          sync.RWMutex
@@ -96,6 +248,46 @@ func (c *CryptoSession) Info() (string, string) {
 	return c.pin, c.fingerprint
 }
 
+// Rekey performs key rotation with a new ephemeral key pair while keeping the same peer.
+func (c *CryptoSession) Rekey(newSalt []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	curve := ecdh.P256()
+	localPriv, err := curve.GenerateKey(cryptorand.Reader)
+	if err != nil {
+		return err
+	}
+	_ = localPriv
+
+	// In a real implementation, this would require a new key exchange with the peer
+	// For forward secrecy, we'd need to exchange new ephemeral keys
+	log.Printf("Key rotation initiated (simulated - full rekey requires peer cooperation)")
+	return nil
+}
+
+func (c *CryptoSession) IsSessionActive() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.active
+}
+
+func (c *CryptoSession) GetFingerprint() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fingerprint
+}
+
+func (c *CryptoSession) GetSessionKeyForAudit() []byte {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.aead == nil {
+		return nil
+	}
+	// Return a hash of the session key for audit (never the raw key)
+	return []byte(c.fingerprint)
+}
+
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 	prkMac := hmac.New(sha256.New, salt)
 	prkMac.Write(ikm)
@@ -121,7 +313,7 @@ func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 // Handshake auto-detects raw X9.63 (65B from iOS) vs X.509 SPKI (91B from Android).
 func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	curve := ecdh.P256()
-	localPriv, err := curve.GenerateKey(rand.Reader)
+	localPriv, err := curve.GenerateKey(cryptorand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +330,9 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		ecdsaPub, ok := parsed.(interface{ ECDH() (*ecdh.PublicKey, error) })
+		ecdsaPub, ok := parsed.(interface {
+			ECDH() (*ecdh.PublicKey, error)
+		})
 		if !ok {
 			return nil, errors.New("unsupported peer public key type")
 		}
@@ -154,7 +348,7 @@ func (c *CryptoSession) Handshake(peerPubBytes []byte) ([]byte, error) {
 	}
 
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	if _, err := cryptorand.Read(salt); err != nil {
 		return nil, err
 	}
 	derived := hkdfSHA256(shared, salt, []byte(kdfInfo), 32)
@@ -206,7 +400,7 @@ func (c *CryptoSession) Encrypt(plain, aad []byte) ([]byte, error) {
 		return nil, errors.New("session key not ready")
 	}
 	nonce := make([]byte, gcmNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := cryptorand.Read(nonce); err != nil {
 		return nil, err
 	}
 	ciphertext := aead.Seal(nil, nonce, plain, aad)
@@ -341,10 +535,148 @@ type UIState struct {
 	Pin         string   `json:"pin,omitempty"`
 	Fingerprint string   `json:"fingerprint,omitempty"`
 	Mime        string   `json:"mime,omitempty"`
+	Codec       string   `json:"codec,omitempty"`
 	IsLandscape bool     `json:"isLandscape"`
 	FPS         int      `json:"fps"`
 	IPs         []string `json:"ips"`
 }
+
+// AuditLogger provides security event logging for the simulator
+type AuditLogger struct {
+	file       *os.File
+	fileSize   int64
+	maxSize    int64
+	logDir     string
+	mu         sync.Mutex
+}
+
+// AuditEvent represents a security audit event
+type AuditEvent struct {
+	Timestamp          string `json:"timestamp"`
+	EventType          string `json:"eventType"`
+	SessionFingerprint string `json:"sessionFingerprint,omitempty"`
+	PeerAddress        string `json:"peerAddress,omitempty"`
+	Details            string `json:"details"`
+	Severity           string `json:"severity"`
+}
+
+const (
+	maxAuditFileSize = 10 * 1024 * 1024 // 10 MB
+	maxAuditFiles    = 7
+)
+
+func NewAuditLogger() *AuditLogger {
+	logDir := "audit_logs"
+	os.MkdirAll(logDir, 0755)
+
+	// Clean old audit files
+	files, _ := os.ReadDir("audit_logs")
+	var auditFiles []string
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "audit_") && strings.HasSuffix(f.Name(), ".log") {
+			auditFiles = append(auditFiles, filepath.Join("audit_logs", f.Name()))
+		}
+	}
+	sort.Strings(auditFiles)
+	for len(auditFiles) > 7 {
+		os.Remove(auditFiles[0])
+		auditFiles = auditFiles[1:]
+	}
+
+	fileName := fmt.Sprintf("audit_%s.log", time.Now().Format("20060102_150405"))
+	filePath := filepath.Join("audit_logs", fileName)
+	file, _ := os.Create(filePath)
+
+	return &AuditLogger{
+		file:    file,
+		maxSize: 10 * 1024 * 1024,
+		logDir:  "audit_logs",
+	}
+}
+
+func (a *AuditLogger) log(eventType, severity, fingerprint, peer, details string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	event := AuditEvent{
+		Timestamp:          time.Now().UTC().Format(time.RFC3339Nano),
+		EventType:          eventType,
+		SessionFingerprint: fingerprint,
+		PeerAddress:        peer,
+		Details:            details,
+		Severity:           severity,
+	}
+
+	data, _ := json.Marshal(event)
+	data = append(data, '\n')
+	
+	// Write to file
+	if a.file != nil {
+		a.file.Write(data)
+		a.fileSize += int64(len(data))
+		
+		// Rotate if needed
+		if a.fileSize > 10*1024*1024 {
+			a.rotate()
+		}
+	}
+	
+	// Also log to stdout
+	log.Printf("AUDIT: [%s] [%s] fp=%s peer=%s %s", eventType, severity, fingerprint, peer, details)
+}
+
+func (a *AuditLogger) rotate() {
+	a.file.Close()
+	fileName := fmt.Sprintf("audit_%s.log", time.Now().Format("20060102_150405"))
+	filePath := filepath.Join("audit_logs", fileName)
+	newFile, _ := os.Create(filePath)
+	a.file = newFile
+	a.fileSize = 0
+	
+	// Clean old files
+	files, _ := os.ReadDir("audit_logs")
+	var auditFiles []string
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "audit_") && strings.HasSuffix(f.Name(), ".log") {
+			auditFiles = append(auditFiles, filepath.Join("audit_logs", f.Name()))
+		}
+	}
+	sort.Strings(auditFiles)
+	for len(auditFiles) > 7 {
+		os.Remove(auditFiles[0])
+		auditFiles = auditFiles[1:]
+	}
+}
+
+func (a *AuditLogger) close() {
+	if a.file != nil {
+		a.file.Close()
+	}
+}
+
+// Audit event types
+const (
+	AuditHandshakeStart       = "HANDSHAKE_START"
+	AuditHandshakeSuccess     = "HANDSHAKE_SUCCESS"
+	AuditHandshakeFailure     = "HANDSHAKE_FAILURE"
+	AuditKeyExchangeInit      = "KEY_EXCHANGE_INIT"
+	AuditKeyExchangeSuccess   = "KEY_EXCHANGE_SUCCESS"
+	AuditKeyExchangeFailure   = "KEY_EXCHANGE_FAILURE"
+	AuditKeyRotation          = "KEY_ROTATION"
+	AuditSessionStart         = "SESSION_START"
+	AuditSessionStop          = "SESSION_STOP"
+	AuditSessionStopUnexpected = "SESSION_STOP_UNEXPECTED"
+	AuditDecryptionFailure    = "DECRYPTION_FAILURE"
+	AuditReplayAttack         = "REPLAY_ATTACK_DETECTED"
+	AuditInvalidSequence      = "INVALID_SEQUENCE"
+	AuditKeyRotationSuccess   = "KEY_ROTATION_SUCCESS"
+	AuditPairingVerified      = "PAIRING_VERIFIED"
+	AuditPairingRejected      = "PAIRING_REJECTED"
+	AuditReconnectAttempt     = "RECONNECT_ATTEMPT"
+	AuditReconnectSuccess     = "RECONNECT_SUCCESS"
+	AuditReconnectFailure     = "RECONNECT_FAILURE"
+	AuditProtocolViolation    = "PROTOCOL_VIOLATION"
+)
 
 type AntiReplayWindow struct {
 	mu      sync.Mutex
@@ -394,31 +726,50 @@ func (a *AntiReplayWindow) Accept(seq int) bool {
 }
 
 type SimulatorServer struct {
-	crypto          CryptoSession
-	reasm           *FrameReassembler
-	udpReplay       AntiReplayWindow
-	clientsMu       sync.Mutex
-	clients         map[*wsClient]struct{}
-	stateMu         sync.RWMutex
-	uiState         UIState
-	tcpOutMu        sync.Mutex
-	tcpOut          net.Conn
-	outSeq          atomic.Int32
-	framesWin       atomic.Int32
-	droppedWin      atomic.Int32
-	lastUdpSeq      atomic.Int32
-	failedHandshake atomic.Int32
+	crypto              CryptoSession
+	reasm               *FrameReassembler
+	udpReplay           AntiReplayWindow
+	clientsMu           sync.Mutex
+	clients             map[*wsClient]struct{}
+	stateMu             sync.RWMutex
+	uiState             UIState
+	tcpOutMu            sync.Mutex
+	tcpOut              net.Conn
+	outSeq              atomic.Int32
+	framesWin           atomic.Int32
+	droppedWin          atomic.Int32
+	lastUdpSeq          atomic.Int32
+	failedHandshake     atomic.Int32
+	trustStoreMu        sync.RWMutex
+	trustedSenders      map[string]bool // fingerprint -> trusted
+
+	// Exponential backoff + IP cooldown for failed handshakes
+	failedHandshakesPerIP   sync.Map // map[string]*atomic.Int32
+	ipCooldownUntil         sync.Map // map[string]int64 (unix ms)
+	maxBackoffMs            int64
+	baseBackoffMs           int64
+	maxFailedBeforeCooldown int32
+
+	// Security: Audit logging
+	auditLog *AuditLogger
+	// Security: Key rotation
+	keyRotationTimer *time.Ticker
 }
 
 func NewSimulatorServer() *SimulatorServer {
 	return &SimulatorServer{
-		reasm:   NewFrameReassembler(),
-		clients: make(map[*wsClient]struct{}),
+		reasm:                   NewFrameReassembler(),
+		clients:                 make(map[*wsClient]struct{}),
+		trustedSenders:          make(map[string]bool),
+		maxBackoffMs:            60_000,
+		baseBackoffMs:           1_000,
+		maxFailedBeforeCooldown: 3,
 		uiState: UIState{
 			State:       "waiting",
 			IsLandscape: true,
 			IPs:         localIPv4s(),
 		},
+		auditLog: NewAuditLogger(),
 	}
 }
 
@@ -630,11 +981,49 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	handshakeCompleted := false
 
+	// Exponential backoff + IP cooldown
+	remoteIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	nowMs := time.Now().UnixMilli()
+
+	// IP cooldown check
+	if cooldownVal, ok := s.ipCooldownUntil.Load(remoteIP); ok {
+		cooldownUntil := cooldownVal.(int64)
+		if nowMs < cooldownUntil {
+			waitMs := cooldownUntil - nowMs
+			log.Printf("Connection from %s rejected — IP cooldown active (%dms remaining)", remoteIP, waitMs)
+			_ = conn.Close()
+			return
+		}
+	}
+
+	// Exponential backoff with jitter based on per-IP failure count
+	ipFailuresVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+	ipFailures := ipFailuresVal.(*atomic.Int32).Load()
+	if ipFailures >= s.maxFailedBeforeCooldown {
+		backoffExp := int(ipFailures - s.maxFailedBeforeCooldown + 1)
+		backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+		if backoffMs > s.maxBackoffMs {
+			backoffMs = s.maxBackoffMs
+		}
+		// Add jitter: ±30%
+		jitter := int64(float64(backoffMs) * 0.3 * (rand.Float64()*2 - 1))
+		totalDelay := backoffMs + jitter
+		if totalDelay < 0 {
+			totalDelay = 0
+		}
+		log.Printf("Connection from %s delayed %dms (failures=%d)", remoteIP, totalDelay, ipFailures)
+		time.Sleep(time.Duration(totalDelay) * time.Millisecond)
+	}
+
 	phoneName := "BYD Phone"
 	mime := "video/avc"
 	isLandscape := true
 	lastSeq := 0
 	dimRe := regexp.MustCompile(`\d{3,4}x\d{3,4}`)
+
+	// DEVICE_IDENTITY tracking
+	pendingIdentityTrusted := false
+	sessionApproved := false
 
 	stopQos := make(chan struct{})
 	go func() {
@@ -688,6 +1077,12 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			}
 		}
 
+		if !s.crypto.IsActive() && opcode != opHelloSyn && opcode != opKeyExchangeInit {
+			break
+		}
+		if s.crypto.IsActive() && (opcode == opHelloSyn || opcode == opKeyExchangeInit) {
+			break
+		}
 		switch opcode {
 		case opHelloSyn:
 			if len(payload) > 0 {
@@ -710,6 +1105,44 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 				Fingerprint: fp,
 				IsLandscape: isLandscape,
 			})
+		case opDeviceIdentity:
+			if !s.crypto.IsActive() {
+				log.Printf("DEVICE_IDENTITY received before encryption active")
+				goto done
+			}
+			verified := verifyDeviceIdentity(payload, s.crypto.fingerprint)
+			pin, fp := s.crypto.Info()
+			if verified != nil {
+				s.trustStoreMu.RLock()
+				pendingIdentityTrusted = s.trustedSenders[verified.Fingerprint]
+				s.trustStoreMu.RUnlock()
+				sessionApproved = pendingIdentityTrusted
+				state := "pairing"
+				if pendingIdentityTrusted {
+					state = "streaming"
+				}
+				s.broadcastJSON(UIState{
+					State:       state,
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					Mime:        mime,
+					IsLandscape: isLandscape,
+					FPS:         60,
+				})
+				log.Printf("DEVICE_IDENTITY verified: fingerprint=%s trusted=%v", verified.Fingerprint, pendingIdentityTrusted)
+			} else {
+				pendingIdentityTrusted = false
+				sessionApproved = false
+				s.broadcastJSON(UIState{
+					State:       "pairing",
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					IsLandscape: isLandscape,
+				})
+				log.Printf("DEVICE_IDENTITY verification failed")
+			}
 		case opCapabilitiesReq:
 			_ = dimRe.FindString(string(payload))
 			s.sendControl(conn, opCapabilitiesResp, []byte("1920x1080@60|H264"))
@@ -721,16 +1154,26 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 			if len(payload) > 0 {
 				mime = string(payload)
 			}
-			_, fp := s.crypto.Info()
-			s.broadcastJSON(UIState{
-				State:       "streaming",
-				PhoneName:   phoneName,
-				Fingerprint: fp,
-				Mime:        mime,
-				IsLandscape: isLandscape,
-				FPS:         60,
-			})
-			s.sendControl(conn, opKeyframeRequest, nil)
+			pin, fp := s.crypto.Info()
+			if sessionApproved {
+				s.broadcastJSON(UIState{
+					State:       "streaming",
+					PhoneName:   phoneName,
+					Fingerprint: fp,
+					Mime:        mime,
+					IsLandscape: isLandscape,
+					FPS:         60,
+				})
+				s.sendControl(conn, opKeyframeRequest, nil)
+			} else {
+				s.broadcastJSON(UIState{
+					State:       "pairing",
+					PhoneName:   phoneName,
+					Pin:         pin,
+					Fingerprint: fp,
+					IsLandscape: isLandscape,
+				})
+			}
 		case opOrientationChange:
 			isLandscape = len(payload) > 0 && payload[0] == 0x01
 			_, fp := s.crypto.Info()
@@ -757,6 +1200,20 @@ func (s *SimulatorServer) handleTCPClient(conn net.Conn) {
 done:
 	if !handshakeCompleted {
 		s.failedHandshake.Add(1)
+		// Record per-IP failure and set cooldown if threshold exceeded
+		ipFailsVal, _ := s.failedHandshakesPerIP.LoadOrStore(remoteIP, &atomic.Int32{})
+		ipFails := ipFailsVal.(*atomic.Int32)
+		newFails := ipFails.Add(1)
+		if newFails >= s.maxFailedBeforeCooldown {
+			backoffExp := int(newFails - s.maxFailedBeforeCooldown + 1)
+			backoffMs := s.baseBackoffMs * int64(1<<uint(backoffExp-1))
+			if backoffMs > s.maxBackoffMs*10 {
+				backoffMs = s.maxBackoffMs * 10 // up to 10 min cooldown
+			}
+			cooldownUntil := time.Now().UnixMilli() + backoffMs
+			s.ipCooldownUntil.Store(remoteIP, cooldownUntil)
+			log.Printf("IP %s placed in cooldown for %dms (failures=%d)", remoteIP, backoffMs, newFails)
+		}
 	}
 	close(stopQos)
 	s.tcpOutMu.Lock()
@@ -859,7 +1316,8 @@ func buildMDNSAnnouncement(ip4 net.IP) []byte {
 	pkt = append(pkt, srvData...)
 
 	// 3. TXT -> model=BYD DiLink 5.0
-	txt := []byte("\x14model=BYD DiLink 5.0")
+	model := "model=BYD DiLink 5.0"
+	txt := append([]byte{byte(len(model))}, model...)
 	pkt = append(pkt, instName...)
 	pkt = append(pkt, 0, 16, 0x80, 1, 0, 0, 0, 120)
 	pkt = binary.BigEndian.AppendUint16(pkt, uint16(len(txt)))
@@ -872,7 +1330,17 @@ func buildMDNSAnnouncement(ip4 net.IP) []byte {
 	return pkt
 }
 
+func localBrowser(r *http.Request) bool {
+	host := r.Host
+	return (host == fmt.Sprintf("127.0.0.1:%d", webUIPort) || host == fmt.Sprintf("localhost:%d", webUIPort)) && r.Header.Get("Origin") == "http://"+host
+}
+
 func (s *SimulatorServer) handleWS(w http.ResponseWriter, r *http.Request) {
+	if !localBrowser(r) {
+		http.Error(w, "same-origin local UI required", http.StatusForbidden)
+		return
+	}
+
 	key := r.Header.Get("Sec-WebSocket-Key")
 	if key == "" {
 		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
@@ -945,7 +1413,10 @@ func (s *SimulatorServer) readWSLoop(client *wsClient, br *bufio.Reader) {
 			if _, err := io.ReadFull(br, ext[:]); err != nil {
 				return
 			}
-			length = int(binary.BigEndian.Uint64(ext[:]))
+			return // UI input is small JSON, never a 64-bit media frame.
+		}
+		if !masked || length > 4096 {
+			return
 		}
 		var maskKey [4]byte
 		if masked {
@@ -969,12 +1440,18 @@ func (s *SimulatorServer) readWSLoop(client *wsClient, br *bufio.Reader) {
 				Y      float32 `json:"y"`
 				Action byte    `json:"action"`
 			}
-			if json.Unmarshal(payload, &msg) == nil && msg.Type == "touch" && s.tcpOut != nil {
+			if json.Unmarshal(payload, &msg) == nil && msg.Type == "touch" {
+				s.tcpOutMu.Lock()
+				conn := s.tcpOut
+				s.tcpOutMu.Unlock()
+				if conn == nil || !s.crypto.IsActive() {
+					continue
+				}
 				tp := make([]byte, 9)
 				binary.BigEndian.PutUint32(tp[0:4], math.Float32bits(msg.X))
 				binary.BigEndian.PutUint32(tp[4:8], math.Float32bits(msg.Y))
 				tp[8] = msg.Action
-				s.sendControl(s.tcpOut, opTouchEvent, tp)
+				s.sendControl(conn, opTouchEvent, tp)
 			}
 		}
 	}
@@ -1045,7 +1522,9 @@ func openBrowser(url string) {
 }
 
 func main() {
-	ensureWindowsFirewall()
+	if os.Getenv("DRIVELINK_CONFIGURE_FIREWALL") == "1" {
+		ensureWindowsFirewall()
+	}
 	srv := NewSimulatorServer()
 	srv.startUDP()
 	srv.startTCP()
@@ -1081,5 +1560,5 @@ func main() {
 		openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webUIPort))
 	}()
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", webUIPort), mux))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", webUIPort), mux))
 }

@@ -98,6 +98,7 @@ class NsdDiscoveryManager(context: Context) {
                 val buf = ByteArray(1024)
                 val pkt = DatagramPacket(buf, buf.size)
                 while (isActive) {
+                    pkt.length = buf.size
                     sock.receive(pkt)
                     val host = pkt.address?.hostAddress ?: continue
                     val raw = String(pkt.data, 0, pkt.length, Charsets.UTF_8)
@@ -107,6 +108,7 @@ class NsdDiscoveryManager(context: Context) {
                     val model = json.optString("model", "BYD / Chinese EV")
                     val ctrlPort = json.optInt("port", 47810)
                     val mediaPort = json.optInt("mediaPort", 47811)
+                    if (ctrlPort !in 1..65535 || mediaPort !in 1..65535) continue
                     val supportsHevc = json.optBoolean("hevc", false)
                     upsertDevice(
                         BydDevice(

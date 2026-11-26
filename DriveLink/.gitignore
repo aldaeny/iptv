@@ -1,0 +1,11 @@
+*.jks
+*.keystore
+*.p12
+*.p8
+*.mobileprovision
+local.properties
+.gradle/
+build/
+DerivedData/
+
+__pycache__/

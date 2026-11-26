@@ -122,8 +122,8 @@ public final class BonjourP2PDiscovery: ObservableObject {
                 let host = String(cString: ipBuf)
                 let name = (obj["name"] as? String) ?? "BYD DiLink"
                 let model = (obj["model"] as? String) ?? "BYD / Chinese EV"
-                let ctrlPort = UInt16((obj["port"] as? Int) ?? 47810)
-                let mediaPort = UInt16((obj["mediaPort"] as? Int) ?? 47811)
+                guard let ctrlPort = UInt16(exactly: (obj["port"] as? Int) ?? 47810), ctrlPort != 0,
+                      let mediaPort = UInt16(exactly: (obj["mediaPort"] as? Int) ?? 47811), mediaPort != 0 else { continue }
                 let hevc = (obj["hevc"] as? Bool) ?? false
 
                 let dev = BydDevice(

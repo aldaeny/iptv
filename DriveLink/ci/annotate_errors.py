@@ -1,29 +1,15 @@
-#!/usr/bin/env python3
-"""
-Annotate build errors from log files as GitHub Actions annotations.
-"""
+"""Expose native compiler diagnostics in the Checks UI; full logs stay in the artifact."""
+import re
 import sys
-import glob
+from pathlib import Path
 
-def main():
-    print("annotate_errors.py: Scanning logs for errors")
-
-    log_files = []
-    for pattern in sys.argv[1:]:
-        log_files.extend(glob.glob(pattern, recursive=True))
-
-    for log_file in log_files:
-        try:
-            with open(log_file, 'r', errors='ignore') as f:
-                for i, line in enumerate(f, 1):
-                    line = line.strip()
-                    if any(kw in line for kw in ['error:', 'FAILURE:', 'Execution failed', 'BUILD FAILED']):
-                        print(f"::error file={log_file},line={i}::{line[:200]}")
-        except Exception:
-            pass
-
-    print("PASS: annotate_errors.py (placeholder)")
-    return 0
-
-if __name__ == "__main__":
-    sys.exit(main())
+seen = set()
+for filename in sys.argv[1:]:
+    path = Path(filename)
+    if not path.is_file():
+        continue
+    for line in path.read_text(errors="replace").splitlines():
+        if re.search(r"^(e: |.*\.(?:swift|kt|kts|xml):\d+[: ].*(?:error|Error):|.*: Error: |Execution failed for task |\s*> .*?(?:failed|not found|could not)|> Could not |Plugin \[id:|.*error: resource )", line):
+            if line not in seen and len(seen) < 40:
+                seen.add(line)
+                print("::error::" + line[:700].replace("%", "%25"))

@@ -1,0 +1,225 @@
+name: DriveLink Publish Release
+
+# Manual, gated publication of DriveLink 1.4.1 artifacts.
+#
+# Nothing here runs automatically. It refuses to publish unless:
+#   * the chosen release run succeeded, and
+#   * every APK inside it verifies (package id, versionCode 3, versionName 1.4.1,
+#     minSdk 26, non-debuggable), and
+#   * the release APKs carry the trusted signer (± DRIVELINK_SIGNER_SHA256), and
+#   * SHA256SUMS.txt matches the uploaded files.
+#
+# Hardened preconditions (all fail closed):
+#   * run_id is numeric, belongs to this repository, is a workflow_dispatch run of
+#     "DriveLink CI & Android Release Build", concluded success, and is at most
+#     MAX_RUN_AGE_DAYS old;
+#   * its head_sha is an ancestor of origin/master AND the current origin/master
+#     tip, built from the master branch;
+#   * the artifact drivelink-release-<head_sha> exists and is not expired. Builds
+#     without a keystore are uploaded as drivelink-unsigned-<head_sha> and this
+#     workflow never downloads that namespace, so unsigned output cannot publish;
+#   * the source release gate is re-run on the exact commit being published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID of the successful 'DriveLink CI & Android Release Build' run"
+        required: true
+        type: string
+      tag:
+        description: "Release tag to create (e.g. v1.4.1)"
+        required: true
+        default: "v1.4.1"
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  # A release run older than this is considered stale and cannot be published.
+  MAX_RUN_AGE_DAYS: "14"
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/master' && inputs.tag == 'v1.4.1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate source run (repo, branch, commit, freshness, signed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          # run_id must be numeric: blocks path traversal / expression injection.
+          [[ $RUN_ID =~ ^[0-9]{6,20}$ ]] || { echo "run_id must be a numeric run id" >&2; exit 1; }
+
+          info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
+          echo "$info" > /tmp/run.json
+
+          # Same repository, same workflow, and a successful conclusion.
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.repository.full_name == $repo' /tmp/run.json >/dev/null \
+            || { echo "source run does not belong to $GITHUB_REPOSITORY" >&2; exit 1; }
+          jq -e '.conclusion == "success"' /tmp/run.json >/dev/null \
+            || { echo "source run did not succeed" >&2; exit 1; }
+          jq -e '.event == "workflow_dispatch"' /tmp/run.json >/dev/null \
+            || { echo "source run must be a workflow_dispatch build, not $(
+                 jq -r .event /tmp/run.json)" >&2; exit 1; }
+          if [[ $(jq -r .name /tmp/run.json) != "DriveLink CI & Android Release Build" ]]; then
+            echo "source run is not the DriveLink release build" >&2; exit 1
+          fi
+
+          jq -e '.path == ".github/workflows/drivelink-android-release.yml"' /tmp/run.json >/dev/null
+
+          head_sha=$(jq -r '.head_sha // ""' /tmp/run.json)
+          [[ $head_sha =~ ^[0-9a-f]{40}$ ]] || { echo "source run has no valid head_sha" >&2; exit 1; }
+
+          # Freshness: refuse stale runs.
+          max_age=$(( MAX_RUN_AGE_DAYS * 86400 ))
+          created=$(jq -r .created_at /tmp/run.json)
+          created_epoch=$(date -u -d "$created" +%s)
+          age=$(( $(date -u +%s) - created_epoch ))
+          [[ $age -le $max_age ]] || { echo "source run is $(( age / 86400 )) days old (limit ${MAX_RUN_AGE_DAYS}); rebuild instead of publishing stale artifacts" >&2; exit 1; }
+
+          # Commit must be on master, and only the current master tip is publishable.
+          git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
+          git merge-base --is-ancestor "$head_sha" origin/master \
+            || { echo "head_sha $head_sha is not an ancestor of origin/master" >&2; exit 1; }
+          [[ $(git rev-parse origin/master) == "$head_sha" ]] \
+            || { echo "head_sha $head_sha is not the current origin/master tip ($(git rev-parse origin/master)); publish a build of the tip" >&2; exit 1; }
+
+          # The run must have been dispatched on master (not on a side branch).
+          [[ $(jq -r .head_branch /tmp/run.json) == "master" ]] \
+            || { echo "source run was built from branch $(jq -r .head_branch /tmp/run.json), expected master" >&2; exit 1; }
+
+          # The signed artifact must exist for this commit.
+          artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --paginate)
+          echo "$artifacts" | jq -e --arg n "drivelink-release-$head_sha" \
+            'any(.artifacts[]?; .name == $n and .expired == false)' >/dev/null \
+            || { echo "no signed artifact drivelink-release-$head_sha in run $RUN_ID (unsigned builds are quarantined and can never be published)" >&2; exit 1; }
+
+          echo "$artifacts" | jq -e --arg n "drivelink-ios-release-$head_sha" \
+            'any(.artifacts[]?; .name == $n and .expired == false)' >/dev/null \
+            || { echo 'Verified signed iOS artifact is required' >&2; exit 1; }
+
+          echo "Source run $RUN_ID OK: $head_sha (master tip, $(( age / 3600 ))h old, signed artifact present)"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      - name: Re-check release gate on the exact published commit
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+          [[ $(git rev-parse HEAD) == "$HEAD_SHA" ]]
+          python3 -m pip install --disable-pip-version-check pyyaml
+          python3 DriveLink/tests/verify_release.py
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android build-tools (for aapt/apksigner)
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "build-tools;35.0.0" >/dev/null
+          printf '%s\n' "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          # Only the signed artifact namespace is ever downloaded.
+          name="drivelink-release-$HEAD_SHA"
+          [[ $name =~ ^drivelink-release-[0-9a-f]{40}$ ]] || { echo "bad artifact name $name" >&2; exit 1; }
+          mkdir -p dist
+          gh run download "$RUN_ID" -n "$name" -D dist
+          gh run download "$RUN_ID" -n "drivelink-ios-release-$HEAD_SHA" -D dist/ios
+          cd dist/ios
+          sha256sum DriveLink-{Free,Full}.ipa | sort > "$RUNNER_TEMP/ios-actual"
+          sort IOS_SHA256SUMS.txt | cmp - "$RUNNER_TEMP/ios-actual"
+
+      - name: Re-verify every APK and checksum before publishing
+        env:
+          DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd dist
+          mapfile -t files < <(ls *.apk)
+          [[ ${#files[@]} -eq 3 ]]
+          python3 - <<'PY'
+          import hashlib, os, re, subprocess, sys
+          trusted = os.environ["DRIVELINK_SIGNER_SHA256"].replace(":", "").lower()
+          if not re.fullmatch(r"[0-9a-f]{64}", trusted):
+              sys.exit("trusted signer SHA-256 is required")
+          expected = {
+              "DriveLink-Standard.apk": ("app.drivelink.cast", "3", "1.4.1"),
+              "DriveLink-FullTouch.apk": ("app.drivelink.cast.touch", "3", "1.4.1"),
+              "DriveLink-Receiver.apk": ("app.drivelink.receiver", "3", "1.4.1"),
+          }
+          sums = {}
+          for line in open("SHA256SUMS.txt"):
+              digest, name = line.split()
+              sums[name.lstrip("*")] = digest
+          for apk, (pid, code, name) in expected.items():
+              digest, _ = hashlib.sha256(open(apk, "rb").read()).hexdigest(), None
+              if digest != sums.get(apk):
+                  sys.exit(f"checksum mismatch for {apk}")
+              badging = subprocess.run(["aapt", "dump", "badging", apk], capture_output=True, text=True, check=True).stdout
+              for token in (f"package: name='{pid}'", f"versionCode='{code}'", f"versionName='{name}'", "sdkVersion:'26'"):
+                  if token not in badging:
+                      sys.exit(f"{apk}: missing {token}")
+              if "application-debuggable" in badging:
+                  sys.exit(f"{apk}: release APK is debuggable")
+              out = subprocess.run(["apksigner", "verify", "--verbose", "--print-certs", apk], capture_output=True, text=True)
+              if out.returncode != 0:
+                  sys.exit(f"{apk}: signature verification failed\n{out.stdout}\n{out.stderr}")
+              signers = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([a-f0-9]+)$", out.stdout.lower(), re.M | re.I)
+              if signers != [trusted]:
+                  sys.exit(f"{apk}: untrusted signer")
+              if "Android Debug" in out.stdout:
+                  sys.exit(f"{apk}: signed with the Android debug key")
+              print(f"OK {apk}: {pid} {name} ({code})")
+          PY
+      - name: Stage, download-check and publish the verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEVICE_TESTED_DIGEST: ${{ vars.DRIVELINK_DEVICE_TESTED_DIGEST }}
+          DEVICE_REPORT: ${{ vars.DRIVELINK_DEVICE_REPORT_URL }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag=v1.4.1
+          # Never overwrite an existing tag or release. A failed draft stays private for review.
+          [[ -z $(git ls-remote --tags origin "refs/tags/$tag") ]]
+          [[ $(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha) == "$HEAD_SHA" ]]
+          # A designated reviewer records the tested artifact set only after physical device tests.
+          digest=$(cat dist/SHA256SUMS.txt dist/ios/IOS_SHA256SUMS.txt | sha256sum | cut -d' ' -f1)
+          [[ $digest == "$DEVICE_TESTED_DIGEST" && $DEVICE_REPORT == "https://github.com/$GITHUB_REPOSITORY/"* ]] || { echo "Device validation missing for artifact set $digest" >&2; exit 1; }
+          assets=(dist/DriveLink-{Standard,FullTouch,Receiver}.apk dist/{SIGNING_REPORT.md,SHA256SUMS.txt,DEVICE_TEST.txt} dist/ios/DriveLink-{Full,Free}.ipa dist/ios/IOS_SHA256SUMS.txt)
+
+          for f in "${assets[@]}"; do test -s "$f"; done
+          flags=(); [[ $PRERELEASE != true ]] || flags+=(--prerelease)
+          gh release create "$tag" --draft "${flags[@]}" --target "$HEAD_SHA" --title 'DriveLink v1.4.1' \
+            --notes-file DriveLink/docs/ANDROID_RELEASE_NOTES.md "${assets[@]}"
+          gh release download "$tag" -D "$RUNNER_TEMP/staged"
+          for f in "${assets[@]}"; do cmp "$f" "$RUNNER_TEMP/staged/${f##*/}"; done
+          gh release edit "$tag" --draft=false
+          gh release download "$tag" -D "$RUNNER_TEMP/published"
+          for f in "${assets[@]}"; do cmp "$f" "$RUNNER_TEMP/published/${f##*/}"; done
+      - name: Upload published artifact manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivelink-published-${{ inputs.tag }}
+          path: dist/
+          if-no-files-found: error

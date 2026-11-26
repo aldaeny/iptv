@@ -1,0 +1,13 @@
+PASS  package identities, version 1.4.1 / code 3 and Java 17 target are consistent
+PASS  Gradle DSL scopes checked (buildToolsVersion, defaultConfig)
+PASS  AGP 8 Kotlin DSL patterns checked (signingConfigs/buildTypes/defaultConfig)
+PASS  all XML / plist / entitlements / JSON files parse
+PASS  all referenced app resources exist (manifest, layouts, Kotlin R.*)
+PASS  all internal Kotlin imports resolve to a declared type
+PASS  gradle wrapper, properties and helper scripts present
+PASS  iOS specs: one app target each, versions, Bonjour and App Group consistent
+PASS  BYD-WMP discovery intact (nsd _byd-mirror._tcp., TCP 47810, UDP 47811, beacon 47813, web UI 47812)
+PASS  manifest permissions and flavour separation intact
+PASS  release workflows: signed/unsigned separated, stale+foreign runs refused
+
+ALL SOURCE RELEASE GATES PASSED

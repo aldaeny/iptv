@@ -55,7 +55,8 @@ public final class DirectMirrorSession: @unchecked Sendable {
         connectTransport()
     }
 
-    public func confirmPairingAndStartStream() {
+    public func confirmPairingAndStartStream(fingerprint: String) {
+        guard protocolWrapper.isEncrypted, fingerprint == sessionFingerprint, capabilitiesReady else { return }
         isDeviceTrusted = true
         activateMediaSession()
     }
@@ -164,10 +165,15 @@ public final class DirectMirrorSession: @unchecked Sendable {
 
         case .keyExchangeResp:
             if let fp = try? protocolWrapper.completeKeyExchange(responsePayload: packet.payload),
-               let device = activeDevice {
+               activeDevice != nil {
                 sessionFingerprint = fp
-                if !isDeviceTrusted {
-                    onPairingVerification?(device, protocolWrapper.pairingPin, fp)
+                if let proof = DeviceIdentityManager.shared.createProof(sessionFingerprint: fp),
+                   let identityFrame = try? protocolWrapper.encodeFrame(
+                       opcode: .deviceIdentity,
+                       rawPayload: proof,
+                       encrypt: true
+                   ) {
+                    transport.sendControl(identityFrame)
                 }
                 let cap = Data("\(activeProfile.id)|\(activeProfile.baseWidth)x\(activeProfile.baseHeight)@\(activeProfile.targetFps)".utf8)
                 if let req = try? protocolWrapper.encodeFrame(opcode: .capabilitiesReq, rawPayload: cap, encrypt: true) {
@@ -176,10 +182,9 @@ public final class DirectMirrorSession: @unchecked Sendable {
             }
 
         case .capabilitiesResp:
+            guard protocolWrapper.isEncrypted, let device = activeDevice else { return }
             capabilitiesReady = true
-            if isDeviceTrusted {
-                activateMediaSession()
-            }
+            onPairingVerification?(device, protocolWrapper.pairingPin, sessionFingerprint)
 
         case .keyframeRequest:
             videoEncoder?.requestKeyFrame()
@@ -237,7 +242,7 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 if let packets = try? self.protocolWrapper.encodeVideoTcpFrames(
                     annexBNalu: annexB,
                     timestampUs: ptsUs,
-                    encrypt: self.protocolWrapper.isEncrypted
+                    encrypt: true
                 ) {
                     for pkt in packets {
                         self.transport.sendControl(pkt)
@@ -246,7 +251,7 @@ public final class DirectMirrorSession: @unchecked Sendable {
             } else if let packets = try? self.protocolWrapper.encodeVideoUdpFrames(
                 annexBNalu: annexB,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: true
             ) {
                 for pkt in packets {
                     self.transport.sendMediaUdp(pkt)
@@ -260,7 +265,7 @@ public final class DirectMirrorSession: @unchecked Sendable {
                 opcode: .audioAac,
                 rawPayload: aac,
                 timestampUs: ptsUs,
-                encrypt: self.protocolWrapper.isEncrypted,
+                encrypt: true,
                 isUdpMedia: !self.useTcpMediaFallback
             ) {
                 if self.useTcpMediaFallback {
@@ -271,7 +276,11 @@ public final class DirectMirrorSession: @unchecked Sendable {
             }
         }
 
-        try? videoEncoder?.configure(profile: activeProfile, orientation: activeOrientation)
+        do { try videoEncoder?.configure(profile: activeProfile, orientation: activeOrientation) } catch {
+            stop(notify: false)
+            onDisconnected?(error.localizedDescription)
+            return
+        }
         transport.sendControl(startFrame)
         streamingActive = true
         onStreamingStarted?(device, activeProfile, sessionFingerprint)
@@ -313,7 +322,7 @@ public final class DirectMirrorSession: @unchecked Sendable {
             if let pingFrame = try? self.protocolWrapper.encodeFrame(
                 opcode: .heartbeatPing,
                 rawPayload: payload,
-                encrypt: self.protocolWrapper.isEncrypted
+                encrypt: true
             ) {
                 self.transport.sendControl(pingFrame)
             }

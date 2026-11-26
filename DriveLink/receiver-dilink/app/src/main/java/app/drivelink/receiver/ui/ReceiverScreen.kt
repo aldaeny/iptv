@@ -44,6 +44,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.drivelink.receiver.R
 import app.drivelink.receiver.protocol.ReceiverState
+import app.drivelink.receiver.security.TrustedSender
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -97,8 +99,13 @@ fun ReceiverScreen(
     state: ReceiverState,
     localIps: List<String> = emptyList(),
     isMuted: Boolean = false,
+    trustedSenders: List<TrustedSender> = emptyList(),
     onToggleMute: () -> Unit = {},
+    onRemoveTrusted: (String) -> Unit = {},
     onDisconnect: () -> Unit = {},
+    onApprove: (alwaysTrust: Boolean) -> Unit = { _ -> },
+    onDeny: () -> Unit = {},
+    onSetAlwaysTrust: (String, Boolean) -> Unit = { _, _ -> },
     onSurfaceReady: (Surface?) -> Unit,
     onTouchNormalized: (xNorm: Float, yNorm: Float, action: Byte) -> Unit = { _, _, _ -> }
 ) {
@@ -329,7 +336,10 @@ fun ReceiverScreen(
                             ReceiverTab.SETTINGS -> ReceiverControlsPanel(
                                 isMuted = isMuted,
                                 localIps = localIps,
-                                onToggleMute = onToggleMute
+                                trustedSenders = trustedSenders,
+                                onToggleMute = onToggleMute,
+                                onRemoveTrusted = onRemoveTrusted,
+                                onSetAlwaysTrust = onSetAlwaysTrust
                             )
                             ReceiverTab.HELP -> ReceiverHelpPanel()
                         }
@@ -384,8 +394,81 @@ fun ReceiverScreen(
                                 color = ReceiverColors.SecondaryText,
                                 fontSize = 14.sp
                             )
+                            state.identityFingerprint?.let { identity ->
+                                Text(
+                                    text = "Sender Identity: ${identity.take(16)}…",
+                                    color = ReceiverColors.SecondaryText,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = if (state.trusted) {
+                                        "جهاز موثوق • Trusted sender"
+                                    } else {
+                                        "جهاز جديد • New sender"
+                                    },
+                                    color = if (state.trusted) ReceiverColors.Success else ReceiverColors.Primary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            state.warning?.let { warning ->
+                                Text(
+                                    text = warning,
+                                    color = ReceiverColors.Error,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            if (state.approved) {
+                                Text(
+                                    text = "تمت الموافقة، بانتظار بدء البث • Approved, waiting for stream",
+                                    color = ReceiverColors.Success,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
+                                )
+                            } else {
+                                var alwaysTrust by remember { mutableStateOf(false) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Button(
+                                        onClick = { onApprove(alwaysTrust) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = ReceiverColors.Success),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(54.dp)
+                                    ) {
+                                        Text(
+                                            text = "موافقة وبدء العرض • Approve & Start",
+                                            color = Color(0xFF04140C),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+                                    androidx.compose.material3.Switch(
+                                        checked = alwaysTrust,
+                                        onCheckedChange = { alwaysTrust = it },
+                                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                                            checkedThumbColor = ReceiverColors.Success,
+                                            checkedTrackColor = ReceiverColors.Success.copy(alpha = 0.4f),
+                                            uncheckedThumbColor = ReceiverColors.SecondaryText,
+                                            uncheckedTrackColor = ReceiverColors.Border
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = "Always Trust هذا الجهاز • Auto-approve next time",
+                                    color = ReceiverColors.SecondaryText,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                             OutlinedButton(
-                                onClick = onDisconnect,
+                                onClick = onDeny,
                                 border = BorderStroke(1.dp, ReceiverColors.Error),
                                 shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
@@ -625,7 +708,10 @@ private fun ReceiverWaitingHomePanel(localIps: List<String>) {
 private fun ReceiverControlsPanel(
     isMuted: Boolean,
     localIps: List<String>,
-    onToggleMute: () -> Unit
+    trustedSenders: List<TrustedSender>,
+    onToggleMute: () -> Unit,
+    onRemoveTrusted: (String) -> Unit,
+    onSetAlwaysTrust: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     Column(
         modifier = Modifier
@@ -691,6 +777,103 @@ private fun ReceiverControlsPanel(
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = ReceiverColors.Surface),
+            border = BorderStroke(1.dp, ReceiverColors.Border),
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Trusted Senders • الأجهزة الموثوقة",
+                    color = ReceiverColors.PrimaryText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (trustedSenders.isEmpty()) {
+                    Text(
+                        "No trusted phones yet. A phone is added only after you approve its first pairing.",
+                        color = ReceiverColors.SecondaryText,
+                        fontSize = 13.sp
+                    )
+                } else {
+                    trustedSenders.forEach { sender ->
+                        var alwaysTrust by remember(sender.fingerprint) { mutableStateOf(sender.alwaysTrust) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    sender.displayName,
+                                    color = ReceiverColors.PrimaryText,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        sender.fingerprint.take(16) + "…",
+                                        color = ReceiverColors.SecondaryText,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    if (sender.alwaysTrust) {
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .background(ReceiverColors.Success.copy(alpha = 0.2f))
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                "Always Trust",
+                                                color = ReceiverColors.Success,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.Switch(
+                                    checked = alwaysTrust,
+                                    onCheckedChange = { newVal ->
+                                        alwaysTrust = newVal
+                                        onSetAlwaysTrust(sender.fingerprint, newVal)
+                                    },
+                                    colors = androidx.compose.material3.SwitchDefaults.colors(
+                                        checkedThumbColor = ReceiverColors.Success,
+                                        checkedTrackColor = ReceiverColors.Success.copy(alpha = 0.4f),
+                                        uncheckedThumbColor = ReceiverColors.SecondaryText,
+                                        uncheckedTrackColor = ReceiverColors.Border
+                                    )
+                                )
+                                TextButton(onClick = { onRemoveTrusted(sender.fingerprint) }) {
+                                    Text("Remove", color = ReceiverColors.Error)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

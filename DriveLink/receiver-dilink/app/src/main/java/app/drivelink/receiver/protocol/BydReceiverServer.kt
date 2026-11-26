@@ -1,9 +1,12 @@
 package app.drivelink.receiver.protocol
 
+import android.content.Context
 import android.media.MediaFormat
 import android.view.Surface
 import app.drivelink.receiver.crypto.ReceiverCryptoManager
 import app.drivelink.receiver.decoder.VideoAudioDecoder
+import app.drivelink.receiver.security.TrustedSender
+import app.drivelink.receiver.security.TrustedSenderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,11 +27,22 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.pow
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface ReceiverState {
     data object WaitingForPhone : ReceiverState
-    data class PairingVerification(val phoneName: String, val pin: String, val fingerprint: String) : ReceiverState
+    data class PairingVerification(
+        val phoneName: String,
+        val pin: String,
+        val fingerprint: String,
+        val identityFingerprint: String? = null,
+        val trusted: Boolean = false,
+        val approved: Boolean = false,
+        val warning: String? = null
+    ) : ReceiverState
     data class MirroringActive(
         val phoneName: String,
         val fingerprint: String,
@@ -45,13 +59,21 @@ sealed interface ReceiverState {
  */
 class BydReceiverServer(
     private val decoder: VideoAudioDecoder = VideoAudioDecoder(),
-    private val crypto: ReceiverCryptoManager = ReceiverCryptoManager()
+    private val crypto: ReceiverCryptoManager = ReceiverCryptoManager(),
+    private val trustStore: TrustedSenderStore? = null
 ) {
     private val _state = MutableStateFlow<ReceiverState>(ReceiverState.WaitingForPhone)
     val state: StateFlow<ReceiverState> = _state.asStateFlow()
 
     private val _isMuted = MutableStateFlow(false)
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
+
+    private val _trustedSenders = MutableStateFlow<List<TrustedSender>>(emptyList())
+    val trustedSenders: StateFlow<List<TrustedSender>> = _trustedSenders.asStateFlow()
+
+    init {
+        refreshTrustedSenders()
+    }
 
     private var tcpServer: ServerSocket? = null
     private var udpSocket: DatagramSocket? = null
@@ -74,12 +96,27 @@ class BydReceiverServer(
     private val reassembler = UdpFrameReassembler()
     private var lastTcpSeq = 0
     private var lastVideoSeq = 0
-    private var droppedPackets = 0
-    private var receivedFramesInWindow = 0
-    private var activeMime: String? = null
-    private var activeLandscape: Boolean = true
-    private var activeBaseWidth: Int = 1920
-    private var activeBaseHeight: Int = 1080
+    @Volatile private var activeMime: String? = null
+    @Volatile private var activeLandscape: Boolean = true
+    @Volatile private var activeBaseWidth: Int = 1920
+    @Volatile private var activeBaseHeight: Int = 1080
+    @Volatile private var sessionApproved = false
+    @Volatile private var sessionActive = false
+    @Volatile private var pendingSinceNs = 0L
+    @Volatile private var pendingMime: String? = null
+    @Volatile private var pendingLandscape: Boolean = true
+    @Volatile private var pendingPhoneName: String = "BYD Phone"
+    @Volatile private var verifiedIdentityFingerprint: String? = null
+    @Volatile private var pendingIdentityTrusted = false
+    private val receivedFramesWindow = AtomicInteger(0)
+    private val droppedFrameCount = AtomicInteger(0)
+
+    // Exponential backoff + IP cooldown for failed handshakes
+    private val failedHandshakesPerIp = ConcurrentHashMap<String, AtomicInteger>()
+    private val ipCooldownUntil = ConcurrentHashMap<String, AtomicLong>()
+    private val maxBackoffMs = 60_000L // 60 seconds max
+    private val baseBackoffMs = 1_000L // 1 second base
+    private val maxFailedBeforeCooldown = 3
 
     fun attachSurface(surface: Surface?) {
         targetSurface = surface
@@ -98,12 +135,64 @@ class BydReceiverServer(
     }
 
     fun disconnectActiveSession() {
+        sessionApproved = false
+        sessionActive = false
+        pendingSinceNs = 0L
         val out = activeClientOut
         val sock = activeClientSocket
         if (out != null) {
             runCatching { sendControlFrame(out, OPCODE_SESSION_STOP, ByteArray(0)) }
         }
         runCatching { sock?.close() }
+    }
+
+    /**
+     * Explicit user approval from the head-unit UI. Returns false when there is nothing waiting,
+     * so a double tap cannot approve a different session that arrived in between.
+     *
+     * @param alwaysTrust If true, this sender will be auto-approved on future connections.
+     */
+    fun approvePendingSession(alwaysTrust: Boolean = false): Boolean {
+        val pending = _state.value as? ReceiverState.PairingVerification ?: return false
+        if (pending.approved) return true
+        sessionApproved = true
+        pendingSinceNs = 0L
+        verifiedIdentityFingerprint?.let { fingerprint ->
+            trustStore?.trust(fingerprint, pending.phoneName, alwaysTrust)
+            refreshTrustedSenders()
+        }
+        _state.value = pending.copy(approved = true, trusted = true)
+        val mime = pendingMime
+        if (mime != null) {
+            activateSession(mime, pendingLandscape)
+        }
+        return true
+    }
+
+    fun setTrustedSenderAlwaysTrust(fingerprint: String, alwaysTrust: Boolean) {
+        trustStore?.setAlwaysTrust(fingerprint, alwaysTrust)
+        refreshTrustedSenders()
+    }
+
+    fun removeTrustedSender(fingerprint: String) {
+        trustStore?.remove(fingerprint)
+        refreshTrustedSenders()
+    }
+
+    fun clearTrustedSenders() {
+        trustStore?.clear()
+        refreshTrustedSenders()
+    }
+
+    private fun refreshTrustedSenders() {
+        _trustedSenders.value = trustStore?.list().orEmpty()
+    }
+
+    fun denyPendingSession() {
+        sessionApproved = false
+        sessionActive = false
+        pendingSinceNs = 0L
+        runCatching { activeClientSocket?.close() }
     }
 
     fun sendTouchEvent(xNorm: Float, yNorm: Float, action: Byte) {
@@ -121,17 +210,26 @@ class BydReceiverServer(
     fun start(scope: CoroutineScope) {
         stop()
         serverJob = scope.launch(Dispatchers.IO) {
-            val server = ServerSocket(CONTROL_PORT).also { tcpServer = it }
+            val server = try { ServerSocket(CONTROL_PORT) } catch (e: java.io.IOException) {
+                android.util.Log.e("DriveLink", "Control listener unavailable", e)
+                return@launch
+            }
+            tcpServer = server
             startUdpMediaLoop(scope)
             startBeaconBroadcaster(scope)
             while (isActive) {
                 val client = runCatching { server.accept() }.getOrNull() ?: break
-                runCatching { activeClientSocket?.close() }
-                val prevJob = clientJob
-                prevJob?.cancel()
+                // Never let a second phone kill an active session: refuse the new socket instead.
+                if (clientJob?.isActive == true) {
+                    runCatching { client.close() }
+                    continue
+                }
                 clientJob = launch(Dispatchers.IO) {
-                    runCatching { prevJob?.join() }
-                    handleClient(client, scope)
+                    client.use {
+                        try { handleClient(it, scope) } catch (e: java.io.IOException) {
+                            android.util.Log.w("DriveLink", "Control connection closed during setup", e)
+                        }
+                    }
                 }
             }
         }
@@ -143,14 +241,14 @@ class BydReceiverServer(
             val hevcSupported = decoder.supportsHevcDecoder()
             val payload = """{"proto":"byd-mirror-v1","name":"BYD DiLink Receiver","model":"BYD DiLink 5.0","port":$CONTROL_PORT,"mediaPort":$MEDIA_UDP_PORT,"hevc":$hevcSupported}"""
                 .toByteArray(Charsets.UTF_8)
-            while (isActive) {
-                val targets = resolveBroadcastAddresses()
-                for (addr in targets) {
-                    runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
+            socket.use {
+                while (isActive) {
+                    for (addr in resolveBroadcastAddresses()) {
+                        runCatching { socket.send(DatagramPacket(payload, payload.size, addr, BEACON_UDP_PORT)) }
+                    }
+                    delay(1_000L)
                 }
-                delay(1_000L)
             }
-            runCatching { socket.close() }
         }
     }
 
@@ -173,13 +271,43 @@ class BydReceiverServer(
         return list.distinct()
     }
 
+    @Synchronized
+    private fun activateSession(mime: String, isLandscape: Boolean) {
+        if (!encryptionActive) return
+        sessionActive = true
+        sessionApproved = true
+        pendingSinceNs = 0L
+        failedHandshakes.set(0)
+        activeMime = mime
+        activeLandscape = isLandscape
+        activeClientSocket?.soTimeout = 0
+        val w = if (isLandscape) activeBaseWidth else activeBaseHeight
+        val h = if (isLandscape) activeBaseHeight else activeBaseWidth
+        targetSurface?.let { surface -> decoder.configureVideo(surface, w, h, mime) }
+        decoder.configureAudio()
+        _state.value = ReceiverState.MirroringActive(
+            phoneName = pendingPhoneName,
+            fingerprint = crypto.sessionFingerprint,
+            isLandscape = isLandscape,
+            fps = 60
+        )
+        activeClientOut?.let { out ->
+            runCatching { sendControlFrame(out, OPCODE_KEYFRAME_REQUEST, ByteArray(0)) }
+        }
+    }
+
     private fun startUdpMediaLoop(scope: CoroutineScope) {
         udpJob = scope.launch(Dispatchers.IO) {
-            val socket = DatagramSocket(MEDIA_UDP_PORT).also { udpSocket = it }
+            val socket = try { DatagramSocket(MEDIA_UDP_PORT) } catch (e: java.net.SocketException) {
+                android.util.Log.w("DriveLink", "UDP unavailable; TCP media fallback remains active", e)
+                return@launch
+            }
+            udpSocket = socket
             val buf = ByteArray(MAX_PACKET_BYTES)
             val packet = DatagramPacket(buf, buf.size)
             while (isActive) {
                 runCatching {
+                    packet.length = buf.size
                     socket.receive(packet)
                     val frameBytes = packet.data.copyOfRange(0, packet.length)
                     processIncomingFrameBytes(frameBytes)
@@ -189,14 +317,34 @@ class BydReceiverServer(
     }
 
     private suspend fun handleClient(client: Socket, scope: CoroutineScope) {
-        val fails = failedHandshakes.get()
-        if (fails >= 3) {
-            delay(minOf(fails - 2, 4) * 1_000L)
+        val remoteIp = client.inetAddress.hostAddress
+        val now = System.currentTimeMillis()
+
+        // IP cooldown check
+        val cooldownUntil = ipCooldownUntil.getOrDefault(remoteIp, AtomicLong(0)).get()
+        if (now < cooldownUntil) {
+            val waitMs = cooldownUntil - now
+            android.util.Log.w("DriveLink", "Connection from $remoteIp rejected — IP cooldown active (${waitMs}ms remaining)")
+            runCatching { client.close() }
+            return
         }
+
+        // Exponential backoff with jitter based on per-IP failure count
+        val ipFailures = failedHandshakesPerIp.getOrDefault(remoteIp, AtomicInteger(0)).get()
+        if (ipFailures >= maxFailedBeforeCooldown) {
+            val backoffMs = minOf(
+                (baseBackoffMs * (2.0.pow(ipFailures - maxFailedBeforeCooldown + 1))).toLong(),
+                maxBackoffMs
+            )
+            val jitter = (Math.random() * 0.3 * backoffMs).toLong() // ±30% jitter
+            val totalDelay = backoffMs + jitter
+            android.util.Log.w("DriveLink", "Connection from $remoteIp delayed ${totalDelay}ms (failures=$ipFailures)")
+            delay(totalDelay)
+        }
+
         client.tcpNoDelay = true
         client.soTimeout = HANDSHAKE_TIMEOUT_MS
         activeClientSocket = client
-        var handshakeCompleted = false
         val input = DataInputStream(client.getInputStream())
         val output = DataOutputStream(client.getOutputStream())
         activeClientOut = output
@@ -207,6 +355,12 @@ class BydReceiverServer(
         antiReplay.reset()
         reassembler.clear()
         crypto.reset()
+        sessionApproved = false
+        sessionActive = false
+        pendingSinceNs = 0L
+        pendingMime = null
+        verifiedIdentityFingerprint = null
+        pendingIdentityTrusted = false
 
         var phoneName = "BYD Phone"
         var currentMime = MediaFormat.MIMETYPE_VIDEO_AVC
@@ -230,6 +384,8 @@ class BydReceiverServer(
                     wirePayload
                 }
 
+                if (!encryptionActive && parsed.opcode != OPCODE_HELLO_SYN && parsed.opcode != OPCODE_KEY_EXCHANGE_INIT) break
+                if (encryptionActive && parsed.opcode in setOf(OPCODE_HELLO_SYN, OPCODE_KEY_EXCHANGE_INIT)) break
                 when (parsed.opcode) {
                     OPCODE_HELLO_SYN -> {
                         phoneName = payload.decodeToString()
@@ -239,11 +395,41 @@ class BydReceiverServer(
                         val (salt, pubKey) = crypto.generateKeyExchangeResponse(payload)
                         sendControlFrame(output, OPCODE_KEY_EXCHANGE_RESP, salt + pubKey)
                         encryptionActive = true
+                        pendingSinceNs = System.nanoTime()
                         _state.value = ReceiverState.PairingVerification(
                             phoneName = phoneName,
                             pin = crypto.pairingPin,
                             fingerprint = crypto.sessionFingerprint
                         )
+                    }
+                    OPCODE_DEVICE_IDENTITY -> {
+                        val verified = ReceiverIdentityVerifier.verify(payload, crypto.sessionFingerprint)
+                        if (verified != null) {
+                            verifiedIdentityFingerprint = verified.fingerprint
+                            pendingIdentityTrusted = trustStore?.isTrusted(verified.fingerprint) == true
+                            sessionApproved = pendingIdentityTrusted
+                            _state.value = ReceiverState.PairingVerification(
+                                phoneName = phoneName,
+                                pin = crypto.pairingPin,
+                                fingerprint = crypto.sessionFingerprint,
+                                identityFingerprint = verified.fingerprint,
+                                trusted = pendingIdentityTrusted,
+                                approved = pendingIdentityTrusted,
+                                warning = if (pendingIdentityTrusted) null else {
+                                    "جهاز جديد؛ وافِق يدوياً لمرة واحدة."
+                                }
+                            )
+                        } else {
+                            verifiedIdentityFingerprint = null
+                            pendingIdentityTrusted = false
+                            sessionApproved = false
+                            _state.value = ReceiverState.PairingVerification(
+                                phoneName = phoneName,
+                                pin = crypto.pairingPin,
+                                fingerprint = crypto.sessionFingerprint,
+                                warning = "إثبات الهوية غير صالح؛ وافِق يدوياً بعد مطابقة الرمز."
+                            )
+                        }
                     }
                     OPCODE_CAPABILITIES_REQ -> {
                         val reqText = payload.decodeToString()
@@ -259,27 +445,37 @@ class BydReceiverServer(
                         client.soTimeout = PAIRING_CONFIRM_TIMEOUT_MS
                     }
                     OPCODE_SESSION_START -> {
-                        handshakeCompleted = true
-                        failedHandshakes.set(0)
-                        client.soTimeout = 0
                         currentMime = payload.decodeToString().ifBlank { MediaFormat.MIMETYPE_VIDEO_AVC }
-                        activeMime = currentMime
-                        activeLandscape = isLandscape
-                        val w = if (activeLandscape) activeBaseWidth else activeBaseHeight
-                        val h = if (activeLandscape) activeBaseHeight else activeBaseWidth
-                        targetSurface?.let { surface ->
-                            decoder.configureVideo(surface, w, h, currentMime)
+                        currentMime = when (currentMime) {
+                            "video/hevc", "video/HEVC" -> MediaFormat.MIMETYPE_VIDEO_HEVC
+                            "video/avc", "video/AVC" -> MediaFormat.MIMETYPE_VIDEO_AVC
+                            else -> MediaFormat.MIMETYPE_VIDEO_AVC
                         }
-                        decoder.configureAudio()
-                        _state.value = ReceiverState.MirroringActive(
-                            phoneName = phoneName,
-                            fingerprint = crypto.sessionFingerprint,
-                            isLandscape = isLandscape,
-                            fps = 60
-                        )
-                        sendControlFrame(output, OPCODE_KEYFRAME_REQUEST, ByteArray(0))
+                        pendingMime = currentMime
+                        pendingLandscape = isLandscape
+                        pendingPhoneName = phoneName
+                        pendingSinceNs = System.nanoTime()
+                        if (sessionApproved) {
+                            activateSession(currentMime, isLandscape)
+                        } else {
+                            _state.value = ReceiverState.PairingVerification(
+                                phoneName = phoneName,
+                                pin = crypto.pairingPin,
+                                fingerprint = crypto.sessionFingerprint,
+                                identityFingerprint = verifiedIdentityFingerprint,
+                                trusted = pendingIdentityTrusted,
+                                approved = false,
+                                warning = if (verifiedIdentityFingerprint == null) {
+                                    "لم يصل إثبات هوية صالح؛ وافِق يدوياً بعد مطابقة الرمز."
+                                } else if (!pendingIdentityTrusted) {
+                                    "جهاز جديد؛ وافِق يدوياً لمرة واحدة."
+                                } else null
+                            )
+                        }
+                    }
                     }
                     OPCODE_ORIENTATION_CHANGE -> {
+                        if (!sessionActive) break
                         isLandscape = payload.firstOrNull() == 0x01.toByte()
                         activeLandscape = isLandscape
                         val w = if (isLandscape) activeBaseWidth else activeBaseHeight
@@ -293,22 +489,28 @@ class BydReceiverServer(
                         )
                     }
                     OPCODE_VIDEO_NALU -> {
-                        if (!encryptionActive) break
-                        receivedFramesInWindow++
+                        if (!sessionActive) break
+                        receivedFramesWindow.incrementAndGet()
                         decoder.decodeVideoFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_VIDEO_NALU_FRAG -> {
-                        if (!encryptionActive) break
+                        if (!sessionActive) break
                         reassembler.pushFragment(payload)?.let { fullFrame ->
-                            receivedFramesInWindow++
+                            receivedFramesWindow.incrementAndGet()
                             decoder.decodeVideoFrame(fullFrame, parsed.timestampUs.toLong())
                         }
                     }
                     OPCODE_AUDIO_AAC -> {
-                        if (!encryptionActive) break
+                        if (!sessionActive) break
                         decoder.decodeAudioFrame(payload, parsed.timestampUs.toLong())
                     }
                     OPCODE_HEARTBEAT_PING -> {
+                        if (!sessionActive && pendingSinceNs > 0L &&
+                            System.nanoTime() - pendingSinceNs > PAIRING_CONFIRM_TIMEOUT_NS
+                        ) {
+                            android.util.Log.w("DriveLink", "Pairing approval deadline elapsed")
+                            break
+                        }
                         sendControlFrame(output, OPCODE_HEARTBEAT_PONG, payload)
                     }
                     OPCODE_SESSION_STOP -> break
@@ -316,12 +518,27 @@ class BydReceiverServer(
             }
         }
 
-        if (!handshakeCompleted) {
+        if (!sessionActive) {
             failedHandshakes.incrementAndGet()
+            val remoteIp = client.inetAddress.hostAddress
+            val ipFails = failedHandshakesPerIp.computeIfAbsent(remoteIp) { AtomicInteger() }.incrementAndGet()
+            if (ipFails >= maxFailedBeforeCooldown) {
+                val cooldownMs = minOf(
+                    (baseBackoffMs * (2.0.pow(ipFails - maxFailedBeforeCooldown + 1))).toLong(),
+                    maxBackoffMs * 10 // up to 10 min cooldown
+                )
+                ipCooldownUntil.put(remoteIp, AtomicLong(System.currentTimeMillis() + cooldownMs))
+                android.util.Log.w("DriveLink", "IP $remoteIp placed in cooldown for ${cooldownMs}ms (failures=$ipFails)")
+            }
         }
         if (activeClientSocket === client) {
             qosJob?.cancel()
             activeMime = null
+            sessionApproved = false
+            sessionActive = false
+            pendingSinceNs = 0L
+            pendingMime = null
+            verifiedIdentityFingerprint = null
             decoder.releaseAll()
             encryptionActive = false
             crypto.reset()
@@ -337,13 +554,14 @@ class BydReceiverServer(
         if (bytes.size < HEADER_SIZE_BYTES) return
         val header = bytes.copyOfRange(0, HEADER_SIZE_BYTES)
         val parsed = parseHeader(header) ?: return
-        if (!antiReplay.accept(parsed.sequence)) return
-        if (bytes.size < HEADER_SIZE_BYTES + parsed.payloadLength) return
+        if (_state.value !is ReceiverState.MirroringActive || bytes.size != HEADER_SIZE_BYTES + parsed.payloadLength) return
         val wirePayload = bytes.copyOfRange(HEADER_SIZE_BYTES, HEADER_SIZE_BYTES + parsed.payloadLength)
         val payload = runCatching { crypto.decrypt(wirePayload, header) }.getOrNull() ?: return
 
+        if (!antiReplay.accept(parsed.sequence)) return
+
         if (lastVideoSeq != 0 && parsed.sequence > lastVideoSeq + 1) {
-            droppedPackets += (parsed.sequence - lastVideoSeq - 1)
+            droppedFrameCount.addAndGet(parsed.sequence - lastVideoSeq - 1)
             activeClientOut?.let { out ->
                 runCatching { sendControlFrame(out, OPCODE_KEYFRAME_REQUEST, ByteArray(0)) }
             }
@@ -352,12 +570,12 @@ class BydReceiverServer(
 
         when (parsed.opcode) {
             OPCODE_VIDEO_NALU -> {
-                receivedFramesInWindow++
+                receivedFramesWindow.incrementAndGet()
                 decoder.decodeVideoFrame(payload, parsed.timestampUs.toLong())
             }
             OPCODE_VIDEO_NALU_FRAG -> {
                 reassembler.pushFragment(payload)?.let { fullFrame ->
-                    receivedFramesInWindow++
+                    receivedFramesWindow.incrementAndGet()
                     decoder.decodeVideoFrame(fullFrame, parsed.timestampUs.toLong())
                 }
             }
@@ -370,8 +588,7 @@ class BydReceiverServer(
         qosJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(1_000L)
-                val fps = receivedFramesInWindow
-                receivedFramesInWindow = 0
+                val fps = receivedFramesWindow.getAndSet(0)
                 val current = _state.value
                 if (current is ReceiverState.MirroringActive) {
                     _state.value = current.copy(fps = fps)
@@ -386,9 +603,8 @@ class BydReceiverServer(
                 val telemetry = ByteBuffer.allocate(8)
                     .order(ByteOrder.BIG_ENDIAN)
                     .putInt(fps)
-                    .putInt(droppedPackets)
+                    .putInt(droppedFrameCount.getAndSet(0))
                     .array()
-                droppedPackets = 0
                 runCatching { sendControlFrame(out, OPCODE_QOS_TELEMETRY, telemetry) }
             }
         }
@@ -434,6 +650,15 @@ class BydReceiverServer(
     }
 
     fun stop() {
+        sessionApproved = false
+        sessionActive = false
+        pendingSinceNs = 0L
+        pendingMime = null
+        pendingLandscape = true
+        verifiedIdentityFingerprint = null
+        pendingIdentityTrusted = false
+        activeMime = null
+        _state.value = ReceiverState.WaitingForPhone
         qosJob?.cancel()
         beaconJob?.cancel()
         udpJob?.cancel()
@@ -451,6 +676,7 @@ class BydReceiverServer(
         const val BEACON_UDP_PORT = 47813
         private const val HANDSHAKE_TIMEOUT_MS = 10_000
         private const val PAIRING_CONFIRM_TIMEOUT_MS = 60_000
+        private const val PAIRING_CONFIRM_TIMEOUT_NS = 60_000_000_000L
         private const val MAGIC_BYTES: Short = 0x4259
         private const val PROTOCOL_VERSION: Byte = 0x01
         private const val HEADER_SIZE_BYTES = 16
@@ -466,6 +692,7 @@ class BydReceiverServer(
         private const val OPCODE_SESSION_START: Byte = 0x07
         private const val OPCODE_SESSION_STOP: Byte = 0x08
         private const val OPCODE_ORIENTATION_CHANGE: Byte = 0x09
+        private const val OPCODE_DEVICE_IDENTITY: Byte = 0x0A
         private const val OPCODE_VIDEO_NALU: Byte = 0x10
         private const val OPCODE_AUDIO_AAC: Byte = 0x11
         private const val OPCODE_KEYFRAME_REQUEST: Byte = 0x12

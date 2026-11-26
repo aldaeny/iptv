@@ -1,5 +1,20 @@
 # CHANGELOG — DriveLink Cast
 
+## 2026-11-22 — Master Execution Prompt Phase 1–11 (unreleased)
+
+- **Receiver lifecycle:** boot restore, stateful foreground notification, trusted-sender list with per-device revoke, and a `MirrorTransport` contract with LAN/Wi-Fi Direct/Miracast endpoints.
+- **CI:** run [45060424962](https://github.com/aldaeny/iptv/actions/runs/45060424962) at `87a72a2` is green: verify, Android (47 tests + both APKs), Receiver (20 tests), iOS (7 tests + unsigned IPAs), Go.
+
+- **Session:** added `SessionStateMachine` with generation guard; `Handshaking → Streaming` is illegal, and `SESSION_START` is now a request rather than an implicit start.
+- **Capabilities:** added evidence-backed Android/iOS registries; CarPlay/Android Auto/USB/Bluetooth remain explicitly `UNSUPPORTED`.
+- **Encoder:** live bitrate/FPS application via `ScreenCaptureEncoder.applyProfile` + `FrameRateGovernor`; resolution/codec changes restart once.
+- **Touch:** `TouchGeometry` rotation mapping, real stroke duration, 512-point paths, and a streaming-only injection gate.
+- **Receiver:** foreground service + process-wide owner; explicit Approve/Reject; single active phone; `DEVICE_IDENTITY 0x0A` verification with manual fallback.
+- **Security:** Android Keystore / iOS Keychain installation identity, session-bound ECDSA proof, trust by `SHA-256(SPKI)`; no attestation claimed.
+- **Protocol:** document version `1.2.0`, wire version `0x01`, new `0x0A`, approval/identity fields.
+- **CI:** `verify_phase1_invariants.py` gate; Android builds on `arena/**`; iOS unsigned build on push while signing stays dispatch-only.
+- **Evidence:** source gates pass locally; native builds + 47 Android / 20 receiver / 6 iOS / Go tests pass in CI. Emulator, physical device, vehicle and distribution signing remain **BLOCKED**.
+
 ## Unreleased (Current Audit & Stabilization Pass on `arena/9ae6c195-iptv`)
 - **Cross-Platform Interop Fix:** Added raw 65-byte X9.63 public key auto-detection in `ReceiverCryptoManager.kt` so iOS senders (`CryptoKit`) can pair with `BydMirror-DiLink-Receiver.apk`.
 - **Receiver Stability & Controls:** Converted `BydReceiverServer.kt` to asynchronous preempting client handling, gated UDP/TCP media behind `encryptionActive`, added multi-NIC UDP `47813` beacon broadcasting, fixed `VideoAudioDecoder.kt` cross-clock A/V PTS drop bug + 3-byte Annex-B start code detection + HEVC fallback, and added Mute/Disconnect/Reject controls in `ReceiverScreen.kt`.

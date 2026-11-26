@@ -1,6 +1,6 @@
 {
   "protocolName": "BYD-Wireless-Mirror-Protocol",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "serviceDiscovery": {
     "nsdServiceType": "_byd-mirror._tcp.",
     "controlPort": 47810,
@@ -19,7 +19,21 @@
     "cipher": "AES-256-GCM",
     "nonceSizeBytes": 12,
     "tagSizeBytes": 16,
-    "pairingTimeoutSeconds": 30
+    "pairingTimeoutSeconds": 60,
+    "approvalRequired": true,
+    "deviceIdentity": {
+      "opcode": "DEVICE_IDENTITY",
+      "version": 1,
+      "publicKeyEncoding": {
+        "android": "X.509 SPKI P-256",
+        "ios": "X9.63 uncompressed 65B"
+      },
+      "signature": "ECDSA-P256-SHA256 (DER)",
+      "signedPayload": "BYD-WMP-IDENTITY-V1|<sessionFingerprint>",
+      "trustKey": "SHA-256(publicKey SPKI) uppercase hex",
+      "failureMode": "manual receiver approval; never auto-trust",
+      "attestation": false
+    }
   },
   "packetFraming": {
     "magicBytes": "0x4259",
@@ -35,6 +49,7 @@
       "SESSION_START": 7,
       "SESSION_STOP": 8,
       "ORIENTATION_CHANGE": 9,
+      "DEVICE_IDENTITY": 10,
       "VIDEO_NALU": 16,
       "AUDIO_AAC": 17,
       "KEYFRAME_REQUEST": 18,
@@ -50,39 +65,104 @@
     {
       "id": "dilink_15_6_fhd",
       "label": "BYD DiLink 15.6\" Rotating FHD",
-      "diLinkVersions": ["4.0", "5.0"],
-      "landscape": { "width": 1920, "height": 1080 },
-      "portrait": { "width": 1080, "height": 1920 },
+      "diLinkVersions": [
+        "4.0",
+        "5.0"
+      ],
+      "landscape": {
+        "width": 1920,
+        "height": 1080
+      },
+      "portrait": {
+        "width": 1080,
+        "height": 1920
+      },
       "maxFps": 60,
       "recommendedBitrateMbps": 14,
-      "codecs": ["H265", "H264"]
+      "codecs": [
+        "H265",
+        "H264"
+      ]
     },
     {
       "id": "dilink_12_8_fhd",
       "label": "BYD DiLink 12.8\" Rotating FHD",
-      "diLinkVersions": ["3.0", "4.0", "5.0"],
-      "landscape": { "width": 1920, "height": 1080 },
-      "portrait": { "width": 1080, "height": 1920 },
+      "diLinkVersions": [
+        "3.0",
+        "4.0",
+        "5.0"
+      ],
+      "landscape": {
+        "width": 1920,
+        "height": 1080
+      },
+      "portrait": {
+        "width": 1080,
+        "height": 1920
+      },
       "maxFps": 60,
       "recommendedBitrateMbps": 12,
-      "codecs": ["H264", "H265"]
+      "codecs": [
+        "H264",
+        "H265"
+      ]
     },
     {
       "id": "dilink_10_1_hd",
       "label": "BYD DiLink 10.1\" HD",
-      "diLinkVersions": ["3.0", "4.0"],
-      "landscape": { "width": 1280, "height": 720 },
-      "portrait": { "width": 720, "height": 1280 },
+      "diLinkVersions": [
+        "3.0",
+        "4.0"
+      ],
+      "landscape": {
+        "width": 1280,
+        "height": 720
+      },
+      "portrait": {
+        "width": 720,
+        "height": 1280
+      },
       "maxFps": 30,
       "recommendedBitrateMbps": 6,
-      "codecs": ["H264"]
+      "codecs": [
+        "H264"
+      ]
     }
   ],
+  "videoCodecs": {
+    "H264": {
+      "mimeType": "video/avc",
+      "description": "H.264 / AVC",
+      "supportedProfiles": [
+        "Baseline",
+        "Main",
+        "High"
+      ],
+      "maxLevel": "5.1"
+    },
+    "H265": {
+      "mimeType": "video/hevc",
+      "description": "H.265 / HEVC",
+      "supportedProfiles": [
+        "Main",
+        "Main 10"
+      ],
+      "maxLevel": "5.1"
+    }
+  },
   "qosTargets": {
     "targetLatencyMs": 45,
     "maxAcceptableJitterMs": 18,
     "keyframeIntervalSeconds": 2,
     "audioSampleRateHz": 48000,
     "audioChannels": 2
+  },
+  "wireVersion": 1,
+  "sessionLifecycle": {
+    "sessionStartIsRequest": true,
+    "receiverApprovalRequired": true,
+    "decodeBeforeApproval": false,
+    "singleActivePhone": true,
+    "approvalDeadlineSeconds": 60
   }
 }

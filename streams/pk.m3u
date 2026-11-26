@@ -186,6 +186,8 @@ http://103.250.28.74:8000/play/a04j/index.m3u8
 http://103.250.28.74:8000/play/a046/index.m3u8
 #EXTINF:-1 tvg-id="OneGolf.pk@SD",One Golf (720p)
 http://162.250.201.58:6211/pk/ONEGOLF/index.m3u8
+#EXTINF:-1 tvg-id="PaighamTelevision.pk@SD",Paigham Television (576p)
+https://samitaorigin.tangotv.in/PAIGAMTV/SAMITAORIGIN/index.m3u8
 #EXTINF:-1 tvg-id="PaighanTV.pk@SD",Paighan TV (1080p)
 http://116.90.120.151:8000/play/a00h/index.m3u8
 #EXTINF:-1 tvg-id="PaighanTV.pk@SD",Paighan TV
@@ -212,8 +214,6 @@ https://tvsen7.aynascope.net/Sports1/index.m3u8
 http://103.250.28.74:8000/play/a04g/index.m3u8
 #EXTINF:-1 tvg-id="QuranTV.pk@SD",Quran TV (576p)
 http://103.250.28.74:8000/play/a03e/index.m3u8
-#EXTINF:-1 tvg-id="RaaviTV.pk@SD",Raavi TV (576p) [Not 24/7]
-http://116.90.120.149:8000/play/a01f/index.m3u8
 #EXTINF:-1 tvg-id="Rohi.pk@SD",Rohi (576p)
 http://103.250.28.74:8000/play/a00d/index.m3u8
 #EXTINF:-1 tvg-id="RozeNews.pk@SD",Roze News (576p)

@@ -2,6 +2,8 @@
 set -euo pipefail
 if [[ $# != 3 || ( $1 != debug && $1 != release && $1 != unsigned ) ]]; then
   echo 'Usage: verify-android-build.sh {debug|release|unsigned} DRIVE_LINK_ROOT OUTPUT_DIR' >&2
+  echo '  release  : requires DRIVELINK_SIGNER_SHA256 and a non-debug signer' >&2
+  echo '  unsigned : release APKs built without a keystore; size/metadata only' >&2
   exit 2
 fi
 variant=$1
@@ -14,14 +16,12 @@ if [[ $variant == release && ! $expected =~ ^[0-9a-f]{64}$ ]]; then
   echo 'A trusted release signing certificate SHA-256 is required.' >&2
   exit 2
 fi
-# For unsigned variant, skip signer verification
-if [[ $variant == unsigned ]]; then
-  variant=release  # APKs are built as release variants
-fi
 mkdir -p "$out"
 ids=(app.drivelink.cast app.drivelink.cast.touch app.drivelink.receiver)
 names=(DriveLink-Standard.apk DriveLink-FullTouch.apk DriveLink-Receiver.apk)
-dirs=("android/app/build/outputs/apk/standard/$variant" "android/app/build/outputs/apk/fullTouch/$variant" "receiver-dilink/app/build/outputs/apk/$variant")
+build_type=$variant
+[[ $variant != unsigned ]] || build_type=release
+dirs=("android/app/build/outputs/apk/standard/$build_type" "android/app/build/outputs/apk/fullTouch/$build_type" "receiver-dilink/app/build/outputs/apk/$build_type")
 shopt -s nullglob
 {
   printf '# Android %s — signing evidence\n\nCommit: `%s`\n\n' "$variant" "$(git rev-parse HEAD)"
@@ -32,31 +32,36 @@ shopt -s nullglob
       exit 1
     fi
     apk=${files[0]}
+    unzip -tq "$apk" >/dev/null
+    for member in AndroidManifest.xml classes.dex resources.arsc; do
+      [[ $(unzip -p "$apk" "$member" | wc -c) -gt 0 ]] || { echo "$apk: missing/empty $member" >&2; exit 1; }
+    done
+    label=${names[i]#DriveLink-}; label=${label%.apk}
+    "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$apk" > "$out/$label-AndroidManifest.xml"
+    python3 "$root/tools/verify-apk-manifest.py" "$label" < "$out/$label-AndroidManifest.xml"
     badging=$(aapt dump badging "$apk")
     package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")
     [[ $package == "${ids[i]}" ]]
     grep -Fq "versionCode='3' versionName='1.4.1'" <<< "$badging"
     grep -Fxq "sdkVersion:'26'" <<< "$badging"
-
-    if [[ $1 == unsigned ]]; then
-      # Unsigned APK: skip apksigner verify, just copy and record SHA256
-      cp -- "$apk" "$out/${names[i]}"
-      sha256=$(sha256sum "$apk" | cut -d' ' -f1)
-      printf '## %s (UNSIGNED)\n\nPackage: `%s`. Size: %s bytes. SHA-256: %s\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$sha256"
-    else
-      signed=$(apksigner verify --verbose --print-certs "$apk")
-      if [[ $variant == release ]]; then
-        [[ $badging != *application-debuggable* ]]
-        actual=$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' <<< "$signed")
-        [[ ${actual,,} == "$expected" ]] || { echo "Release signer mismatch for $package" >&2; exit 1; }
-        if grep -Ei '^Signer #[0-9]+ certificate DN:.*CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signed" >/dev/null; then
-          echo "Debug certificate rejected for $package" >&2
-          exit 1
-        fi
-      fi
-      cp -- "$apk" "$out/${names[i]}"
-      printf '## %s\n\nPackage: `%s`. Size: %s bytes.\n\n```text\n%s\n```\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$signed"
+    if ! signed=$(apksigner verify --verbose --print-certs "$apk" 2>&1); then
+      [[ $variant == unsigned ]] || { echo "$apk: signature verification failed" >&2; exit 1; }
+    elif [[ $variant == unsigned ]]; then
+      echo "$apk: expected unsigned release" >&2; exit 1
     fi
+    if [[ $variant == release ]]; then
+      [[ $badging != *application-debuggable* ]]
+      actual=$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' <<< "$signed")
+      [[ ${actual,,} == "$expected" ]] || { echo "Release signer mismatch for $package" >&2; exit 1; }
+      if grep -Ei '^Signer #[0-9]+ certificate DN:.*CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signed" >/dev/null; then
+        echo "Debug certificate rejected for $package" >&2
+        exit 1
+      fi
+    elif [[ $variant == unsigned ]]; then
+      [[ $badging != *application-debuggable* ]] || { echo "Unsigned release build must not be debuggable ($package)" >&2; exit 1; }
+    fi
+    cp -- "$apk" "$out/${names[i]}"
+    printf '## %s\n\nPackage: `%s`. Size: %s bytes.\n\n```text\n%s\n```\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$signed"
   done
 } > "$out/SIGNING_REPORT.md"
 (cd "$out"; sha256sum -- "${names[@]}" > SHA256SUMS.txt; sha256sum -c SHA256SUMS.txt)

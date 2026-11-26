@@ -28,6 +28,7 @@ class ScreenCaptureEncoder(
     private val mediaProjection: MediaProjection,
     private val scope: CoroutineScope,
     private val onEncodedNalu: suspend (ByteArray, Int) -> Unit,
+    private val onCodecFallback: (String) -> Unit = {},
     private val onProjectionStopped: () -> Unit = {}
 ) {
     private var codec: MediaCodec? = null
@@ -36,6 +37,10 @@ class ScreenCaptureEncoder(
     private var drainJob: Job? = null
     private var codecConfigNalu: ByteArray? = null
     private var callbackRegistered = false
+    private var activeProfile: DisplayProfile? = null
+    private var activeOrientation: DisplayOrientation = DisplayOrientation.LANDSCAPE
+    private var activeDensityDpi: Int = 0
+    private val frameGovernor = FrameRateGovernor(60)
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -53,7 +58,8 @@ class ScreenCaptureEncoder(
 
         val (width, height) = profile.dimensionsFor(orientation)
         val requestedMime = profile.codec.mimeType
-        var mediaCodec: MediaCodec? = null
+        var selectedMime = requestedMime
+        var activeCodec: MediaCodec? = null
         for (candidateMime in listOf(requestedMime, MediaFormat.MIMETYPE_VIDEO_AVC).distinct()) {
             val format = MediaFormat.createVideoFormat(candidateMime, width, height).apply {
                 setInteger(
@@ -71,17 +77,44 @@ class ScreenCaptureEncoder(
             }
             val created = runCatching {
                 MediaCodec.createEncoderByType(candidateMime).apply {
-                    configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    // A candidate that refuses the format must be released here: otherwise a failed
+                    // fallback attempt keeps a native encoder allocated for the rest of the session.
+                    try {
+                        configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    } catch (error: Throwable) {
+                        runCatching { release() }
+                        throw error
+                    }
                 }
             }.getOrNull()
             if (created != null) {
-                mediaCodec = created
+                activeCodec = created
+                selectedMime = candidateMime
                 break
             }
         }
-        val activeCodec = requireNotNull(mediaCodec) { "No hardware video encoder available" }
-        val surface = activeCodec.createInputSurface()
-        activeCodec.start()
+        val encoder = requireNotNull(activeCodec) {
+            onProjectionStopped()
+            "No hardware video encoder available"
+        }
+        val surface = try {
+            encoder.createInputSurface()
+        } catch (error: Throwable) {
+            runCatching { encoder.release() }
+            throw error
+        }
+        try {
+            encoder.start()
+        } catch (error: Throwable) {
+            runCatching { surface.release() }
+            runCatching { encoder.release() }
+            throw error
+        }
+        // Announced only once the encoder is actually running, so a codec that fails to start
+        // can never move the session profile away from the codec that is really in use.
+        if (selectedMime != requestedMime) {
+            onCodecFallback(selectedMime)
+        }
 
         val display = mediaProjection.createVirtualDisplay(
             "BYD-Wireless-Display",
@@ -94,16 +127,25 @@ class ScreenCaptureEncoder(
             null
         )
 
-        codec = activeCodec
+        codec = encoder
         inputSurface = surface
         virtualDisplay = display
+        activeProfile = profile
+        activeOrientation = orientation
+        activeDensityDpi = densityDpi
+        frameGovernor.targetFps = profile.targetFps
+        frameGovernor.reset()
 
         drainJob = scope.launch(Dispatchers.Default) {
+            var codecConfigNalu: ByteArray? = null
             val bufferInfo = MediaCodec.BufferInfo()
             while (isActive) {
-                val index = runCatching { activeCodec.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrDefault(-1)
+                val index = runCatching { encoder.dequeueOutputBuffer(bufferInfo, 10_000L) }.getOrElse {
+                    if (isActive) onProjectionStopped()
+                    return@launch
+                }
                 if (index >= 0) {
-                    val outBuffer = activeCodec.getOutputBuffer(index)
+                    val outBuffer = encoder.getOutputBuffer(index)
                     if (outBuffer != null && bufferInfo.size > 0) {
                         val nalu = ByteArray(bufferInfo.size)
                         outBuffer.position(bufferInfo.offset)
@@ -114,13 +156,16 @@ class ScreenCaptureEncoder(
                             codecConfigNalu = nalu
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         } else if (isKey && codecConfigNalu != null) {
-                            val combined = codecConfigNalu!! + nalu
-                            runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
-                        } else {
+                            // Smart cast: codecConfigNalu is non-null here due to the check above
+                            val combined = codecConfigNalu + nalu
+                            if (frameGovernor.shouldEmit(System.nanoTime(), isKeyFrame = true)) {
+                                runCatching { onEncodedNalu(combined, bufferInfo.presentationTimeUs.toInt()) }
+                            }
+                        } else if (frameGovernor.shouldEmit(System.nanoTime(), isKeyFrame = false)) {
                             runCatching { onEncodedNalu(nalu, bufferInfo.presentationTimeUs.toInt()) }
                         }
                     }
-                    runCatching { activeCodec.releaseOutputBuffer(index, false) }
+                    runCatching { encoder.releaseOutputBuffer(index, false) }
                 }
             }
         }
@@ -130,11 +175,39 @@ class ScreenCaptureEncoder(
         start(profile, orientation, densityDpi)
     }
 
-    fun updateBitrateMbps(bitrateMbps: Int) {
-        val params = Bundle().apply {
-            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrateMbps * 1_000_000)
+    /**
+     * Applies bitrate/FPS changes to the running encoder. Returns true when the change was live;
+     * false means the caller must restart (dimensions or codec changed), which is deliberately not
+     * done from inside a codec callback to avoid recursive restarts.
+     */
+    fun applyProfile(profile: DisplayProfile, orientation: DisplayOrientation, densityDpi: Int): Boolean {
+        val current = activeProfile ?: return false
+        val plan = EncoderReconfiguration.plan(current, profile)
+        if (plan.requiresRestart) {
+            start(profile, orientation, densityDpi)
+            return false
         }
-        runCatching { codec?.setParameters(params) }
+        if (!plan.canApplyLive) return true
+        val params = Bundle().apply {
+            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, profile.bitrateMbps * 1_000_000)
+            putInt(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
+        }
+        if (runCatching { codec?.setParameters(params) }.isFailure) return false
+        frameGovernor.targetFps = profile.targetFps
+        activeProfile = profile
+        activeOrientation = orientation
+        activeDensityDpi = densityDpi
+        requestKeyFrame()
+        return true
+    }
+
+    fun updateBitrateMbps(bitrateMbps: Int) {
+        val profile = activeProfile ?: return
+        applyProfile(
+            profile.copy(bitrateMbps = bitrateMbps),
+            activeOrientation,
+            activeDensityDpi
+        )
     }
 
     fun requestKeyFrame() {
