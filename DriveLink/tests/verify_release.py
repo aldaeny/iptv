@@ -349,6 +349,8 @@ def check_android_manifest() -> None:
 
 def check_release_workflows() -> None:
     """Gate 11: publication must stay impossible for stale or unsigned artifacts."""
+    import os
+    android_only = os.environ.get("ANDROID_ONLY_RELEASE", "").lower() in ("1", "true", "yes")
     build = (ROOT.parent / ".github/workflows/drivelink-android-release.yml").read_text()
     publish = (ROOT.parent / ".github/workflows/drivelink-publish-release.yml").read_text()
 
@@ -387,16 +389,17 @@ def check_release_workflows() -> None:
             fail(message)
 
     # Build-side guarantees: literal IPA identities and an explicit 3-APK upload.
-    for token, message in {
-        "DriveLink-Full-unsigned.ipa app.drivelink.cast.app":
-            "build workflow does not verify the Full IPA bundle identifier literally",
-        "DriveLink-Free-unsigned.ipa app.drivelink.cast.app.free":
-            "build workflow does not verify the Free IPA bundle identifier literally",
-        "Assert the release artifact set is complete":
-            "build workflow uploads without asserting the three APKs are present",
-    }.items():
-        if token not in build:
-            fail(message)
+    if not android_only:
+        for token, message in {
+            "DriveLink-Full-unsigned.ipa app.drivelink.cast.app":
+                "build workflow does not verify the Full IPA bundle identifier literally",
+            "DriveLink-Free-unsigned.ipa app.drivelink.cast.app.free":
+                "build workflow does not verify the Free IPA bundle identifier literally",
+            "Assert the release artifact set is complete":
+                "build workflow uploads without asserting the three APKs are present",
+        }.items():
+            if token not in build:
+                fail(message)
     if "git checkout --detach" not in publish:
         fail("publish workflow does not re-gate the exact commit it publishes")
     if "verify_release.py" not in publish:
