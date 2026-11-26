@@ -88,7 +88,7 @@ fun ConnectingScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.SpaceBetween)
+        verticalArrangement = Arrangement.spacedBy(20.dp, Arrangement.SpaceBetween)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
