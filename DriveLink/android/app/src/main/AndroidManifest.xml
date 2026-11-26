@@ -55,6 +55,6 @@
         <service
             android:name=".service.MirrorForegroundService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|dataSync|microphone" />
     </application>
 </manifest>
