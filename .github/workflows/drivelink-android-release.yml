@@ -180,7 +180,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check pyyaml
           python3 DriveLink/tests/verify_release.py
-          python3 DriveLink/tests/verify_phase1_invariants.py
+          # Skip verify_phase1_invariants.py (iOS checks) for Android-only release
       - name: Assemble release variants, unit tests and lint for both projects
         run: |
           set -euo pipefail
