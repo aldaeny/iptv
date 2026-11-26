@@ -5,6 +5,11 @@
 
     <application>
         <service
+            android:name="app.drivelink.cast.service.MirrorForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|dataSync|microphone" />
+
+        <service
             android:name="app.drivelink.cast.service.MirrorOverlayService"
             android:exported="false" />
 
