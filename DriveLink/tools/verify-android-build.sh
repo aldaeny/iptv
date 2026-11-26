@@ -37,18 +37,26 @@ shopt -s nullglob
     [[ $package == "${ids[i]}" ]]
     grep -Fq "versionCode='3' versionName='1.4.1'" <<< "$badging"
     grep -Fxq "sdkVersion:'26'" <<< "$badging"
-    signed=$(apksigner verify --verbose --print-certs "$apk")
-    if [[ $variant == release ]]; then
-      [[ $badging != *application-debuggable* ]]
-      actual=$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' <<< "$signed")
-      [[ ${actual,,} == "$expected" ]] || { echo "Release signer mismatch for $package" >&2; exit 1; }
-      if grep -Ei '^Signer #[0-9]+ certificate DN:.*CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signed" >/dev/null; then
-        echo "Debug certificate rejected for $package" >&2
-        exit 1
+
+    if [[ $1 == unsigned ]]; then
+      # Unsigned APK: skip apksigner verify, just copy and record SHA256
+      cp -- "$apk" "$out/${names[i]}"
+      sha256=$(sha256sum "$apk" | cut -d' ' -f1)
+      printf '## %s (UNSIGNED)\n\nPackage: `%s`. Size: %s bytes. SHA-256: %s\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$sha256"
+    else
+      signed=$(apksigner verify --verbose --print-certs "$apk")
+      if [[ $variant == release ]]; then
+        [[ $badging != *application-debuggable* ]]
+        actual=$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' <<< "$signed")
+        [[ ${actual,,} == "$expected" ]] || { echo "Release signer mismatch for $package" >&2; exit 1; }
+        if grep -Ei '^Signer #[0-9]+ certificate DN:.*CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signed" >/dev/null; then
+          echo "Debug certificate rejected for $package" >&2
+          exit 1
+        fi
       fi
+      cp -- "$apk" "$out/${names[i]}"
+      printf '## %s\n\nPackage: `%s`. Size: %s bytes.\n\n```text\n%s\n```\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$signed"
     fi
-    cp -- "$apk" "$out/${names[i]}"
-    printf '## %s\n\nPackage: `%s`. Size: %s bytes.\n\n```text\n%s\n```\n\n' "${names[i]}" "$package" "$(wc -c < "$apk")" "$signed"
   done
 } > "$out/SIGNING_REPORT.md"
 (cd "$out"; sha256sum -- "${names[@]}" > SHA256SUMS.txt; sha256sum -c SHA256SUMS.txt)
