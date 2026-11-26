@@ -209,8 +209,8 @@ jobs:
           (cd DriveLink/android && ./gradlew --no-daemon --stacktrace :app:assembleStandardDebug :app:assembleFullTouchDebug)
           (cd DriveLink/receiver-dilink && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
           bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
-      - name: Smoke test release-signed APKs, or separately labelled debug APKs if unsigned
-        if: github.event_name == 'workflow_dispatch'
+      - name: Smoke test release-signed APKs (skip on unsigned — no KVM in GitHub Actions)
+        if: github.event_name == 'workflow_dispatch' && steps.signmode.outputs.mode == 'release'
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -237,8 +237,7 @@ jobs:
             if ! kill -0 "$emulator_pid" || (( SECONDS >= deadline )); then echo "::error::Emulator exited or boot deadline reached; KVM fallback=${args[*]:-none}"; tail -50 "$RUNNER_TEMP/emulator.log"; grep -Ei "ERROR +[|]|PANIC|FATAL|No space left" "$RUNNER_TEMP/emulator.log" | tail -8 | sed "s/^/::error::/"; exit 1; fi
             sleep 3
           done
-          dir="$RUNNER_TEMP/drivelink-debug"
-          if [[ $DRIVELINK_RELEASE_SIGNABLE == true ]]; then dir="$RUNNER_TEMP/drivelink-release"; fi
+          dir="$RUNNER_TEMP/drivelink-release"
           bash DriveLink/tools/smoke-android.sh "$dir" | tee "$dir/DEVICE_TEST.txt"
           while IFS= read -r line; do echo "::notice::$line"; done < <(grep "^PASS install and launch:" "$dir/DEVICE_TEST.txt")
       - name: Report Kotlin/Gradle errors as annotations
