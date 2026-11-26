@@ -332,7 +332,8 @@ def check_android_manifest() -> None:
     for tree in (manifest, ET.parse(ROOT / "android/app/src/fullTouch/AndroidManifest.xml")):
         projection = next((s for s in tree.findall("application/service")
                            if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService"), None)
-        if projection is None or projection.get(android + "foregroundServiceType") != "mediaProjection":
+        fs_type = projection.get(android + "foregroundServiceType", "") if projection else ""
+        if projection is None or "mediaProjection" not in fs_type:
             fail("both flavor manifest inputs must declare the projection service type")
     missing = required - perms
     if missing:
