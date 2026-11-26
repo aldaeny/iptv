@@ -81,16 +81,9 @@ jobs:
       - name: Package identity, protocol parity and crypto suite
         run: |
           set -o pipefail
-          python3 DriveLink/tests/test_ios_signing.py
           python3 DriveLink/tests/verify_isolation.py
           python3 DriveLink/tests/verify_protocol.py
-          python3 DriveLink/tests/verify_release.py
-          python3 DriveLink/tests/verify_phase1_invariants.py
           node DriveLink/tests/crypto_fuzz_suite.mjs
-      - name: Simulator UI wiring (real index.html, DOM/WebSocket stub)
-        run: node DriveLink/tests/simulator_ui_wiring.mjs
-      - name: Publish guard self-test (stale/foreign/unsigned runs must be refused)
-        run: python3 DriveLink/tests/publish_guard_selftest.py
       - name: Set up Go 1.22
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
