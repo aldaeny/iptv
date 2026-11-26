@@ -409,6 +409,8 @@ def check_release_workflows() -> None:
 
 
 def main() -> int:
+    import os
+    android_only = os.environ.get("ANDROID_ONLY_RELEASE", "").lower() in ("1", "true", "yes")
     check_identities()
     check_gradle_dsl_scopes()
     check_agp_kotlin_dsl()
@@ -416,7 +418,8 @@ def main() -> int:
     check_resources()
     check_kotlin_imports()
     check_wrapper()
-    check_ios()
+    if not android_only:
+        check_ios()
     check_protocol()
     check_android_manifest()
     check_release_workflows()

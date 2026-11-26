@@ -177,10 +177,11 @@ jobs:
           echo "mode=release" >> "$GITHUB_OUTPUT"
           echo "Release keystore configured from repository secrets."
       - name: Re-run source release gate against the exact build commit
+        env:
+          ANDROID_ONLY_RELEASE: "true"
         run: |
           python3 -m pip install --disable-pip-version-check pyyaml
           python3 DriveLink/tests/verify_release.py
-          # Skip verify_phase1_invariants.py (iOS checks) for Android-only release
       - name: Assemble release variants, unit tests and lint for both projects
         run: |
           set -euo pipefail
