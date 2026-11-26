@@ -31,9 +31,11 @@ def main():
     assert opcodes["VIDEO_NALU_FRAG"] == 0x13
     assert opcodes["TOUCH_EVENT"] == 0x14
 
-    # Check iOS Project.yml
-    ios_project = (ROOT / "ios/Project.yml").read_text()
-    assert "1.4.1" in ios_project or "MARKETING_VERSION" in ios_project
+    # Check iOS Info.plist for version
+    import plistlib
+    ios_plist = plistlib.loads((ROOT / "ios/Info.plist").read_bytes())
+    assert ios_plist.get("CFBundleShortVersionString") == "1.4.1", "iOS version mismatch"
+    assert ios_plist.get("CFBundleVersion") == "3", "iOS build version mismatch"
 
     print("PASS: verify_phase1_invariants.py")
     return 0
