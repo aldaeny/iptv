@@ -198,9 +198,11 @@ jobs:
           DRIVELINK_SIGNER_SHA256: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
         run: |
           set -o pipefail
-          # APKs are always built as release variants; pass 'release' so verify script finds them.
-          # Signer verification only runs when DRIVELINK_SIGNER_SHA256 is set.
-          bash DriveLink/tools/verify-android-build.sh release DriveLink "$RUNNER_TEMP/drivelink-release"
+          if [ "$DRIVELINK_RELEASE_SIGNABLE" = "true" ]; then
+            bash DriveLink/tools/verify-android-build.sh release DriveLink "$RUNNER_TEMP/drivelink-release"
+          else
+            bash DriveLink/tools/verify-android-build.sh unsigned DriveLink "$RUNNER_TEMP/drivelink-release"
+          fi
       - name: Build debug APKs (installable smoke-test artifacts)
         run: |
           set -o pipefail

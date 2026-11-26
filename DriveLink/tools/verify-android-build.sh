@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# != 3 || ( $1 != debug && $1 != release ) ]]; then
-  echo 'Usage: verify-android-build.sh {debug|release} DRIVE_LINK_ROOT OUTPUT_DIR' >&2
+if [[ $# != 3 || ( $1 != debug && $1 != release && $1 != unsigned ) ]]; then
+  echo 'Usage: verify-android-build.sh {debug|release|unsigned} DRIVE_LINK_ROOT OUTPUT_DIR' >&2
   exit 2
 fi
 variant=$1
@@ -13,6 +13,10 @@ expected=${expected,,}
 if [[ $variant == release && ! $expected =~ ^[0-9a-f]{64}$ ]]; then
   echo 'A trusted release signing certificate SHA-256 is required.' >&2
   exit 2
+fi
+# For unsigned variant, skip signer verification
+if [[ $variant == unsigned ]]; then
+  variant=release  # APKs are built as release variants
 fi
 mkdir -p "$out"
 ids=(app.drivelink.cast app.drivelink.cast.touch app.drivelink.receiver)
