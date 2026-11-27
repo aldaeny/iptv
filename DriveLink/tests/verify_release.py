@@ -330,8 +330,11 @@ def check_android_manifest() -> None:
     }
     android = "{" + ns["android"] + "}"
     # Check main manifest only; fullTouch inherits via manifest merger
-    projection = next((s for s in manifest.findall("application/service")
-                       if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService"), None)
+    projection = None
+    for s in manifest.iter("service"):
+        if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService":
+            projection = s
+            break
     fs_type = projection.get(android + "foregroundServiceType", "") if projection else ""
     if projection is None or "mediaProjection" not in fs_type:
         fail("main manifest must declare MirrorForegroundService with mediaProjection")
