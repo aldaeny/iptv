@@ -331,8 +331,12 @@ def check_android_manifest() -> None:
     android = "{" + ns["android"] + "}"
     # Check main manifest only; fullTouch inherits via manifest merger
     projection = None
+    # Debug: print all services
     for s in manifest.findall(".//service"):
-        if s.get(android + "name") == "app.drivelink.cast.service.MirrorForegroundService":
+        name = s.get(android + "name")
+        if name:
+            print(f"DEBUG: Found service: {name}")
+        if name == "app.drivelink.cast.service.MirrorForegroundService":
             projection = s
             break
     fs_type = projection.get(android + "foregroundServiceType", "") if projection else ""
