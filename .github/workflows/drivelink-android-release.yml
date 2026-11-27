@@ -350,7 +350,7 @@ jobs:
         run: |
           echo '::warning::Unsigned build — artifacts are diagnostic only, not for distribution.'
           # Allow workflow to complete; publish workflow will gate on signer.
-ios-standard:
+  ios-standard:
     # Build iOS Standard variant (with extensions) - unsigned for CI
     if: github.event_name == 'workflow_dispatch'
     needs: verify
