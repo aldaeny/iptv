@@ -12,11 +12,18 @@
 ### Android APKs (Signed Release)
 | Artifact | Package | Size | SHA-256 |
 |----------|---------|------|---------|
-| `DriveLink-Standard.apk` | `app.drivelink.cast` | 12.3 MB | `366dd51e136ce75cac0cf2d69d694759d10ba2d73f6cea1dd0f824a8cc1d8134` |
-| `DriveLink-FullTouch.apk` | `app.drivelink.cast.touch` | 12.3 MB | `c11e322a2ac164006fe04e728d8d427e5c3cb398946fc3b97bb746db8e66cd89` |
-| `DriveLink-Receiver.apk` | `app.drivelink.receiver` | 11.4 MB | `9274811ef22ef247952cbfc27ad8e513c2fde6da1aa34d9fed2fde563c0a6b7a` |
+| `DriveLink-Standard.apk` | `app.drivelink.cast` | 11.7 MB | `32a9e01032e8279fd2bf536950c30811a064799897dcdeae867f58de0f8ab3bf` |
+| `DriveLink-FullTouch.apk` | `app.drivelink.cast.touch` | 11.7 MB | `70609a9fa368d16e406b2635de81119cf8c47b0ef12181f664e5d8edde710100` |
+| `DriveLink-Receiver.apk` | `app.drivelink.receiver` | 10.9 MB | `3e26e0c49c2b472a5fb46901122b902a95539d21b87ac28a90fd3429a1ad4724` |
 
 > ✅ **These APKs are signed with the release keystore.** Ready for distribution.
+
+### iOS IPA (Unsigned - CI Build)
+| Artifact | Platform | Size | SHA-256 |
+|----------|----------|------|---------|
+| `BydWirelessMirror-Full.ipa` | iOS (Standard with Extensions) | 3.7 MB | `eea150ab31bc629115e398b9a702ceec7d3bbb8d92ec0eeee2be238ab7cc9ee3` |
+
+> ⚠️ **This IPA is unsigned.** For distribution, configure Apple Developer certificates and re-run the workflow on `master` branch.
 
 ### Simulators
 | Artifact | Platform | Size | SHA-256 |
@@ -36,4 +43,4 @@ All verification suites pass:
 See [INSTALLATION.md](INSTALLATION.md) for device setup instructions.
 
 ## Source
-Built from commit `6a18aec34` on branch `master`
+Built from commit `f06eb83af` on branch `master`
