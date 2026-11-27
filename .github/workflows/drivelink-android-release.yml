@@ -350,4 +350,119 @@ jobs:
         run: |
           echo '::warning::Unsigned build — artifacts are diagnostic only, not for distribution.'
           # Allow workflow to complete; publish workflow will gate on signer.
+ios-standard:
+    # Build iOS Standard variant (with extensions) - unsigned for CI
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+      - name: Generate Xcode project (Standard)
+        run: |
+          cd DriveLink/ios
+          xcodegen generate --spec Project.yml
+      - name: Build iOS Standard (unsigned)
+        run: |
+          cd DriveLink/ios
+          xcodebuild -project BydWirelessMirror.xcodeproj \
+            -scheme BydWirelessMirror \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+      - name: Package Standard IPA (unsigned)
+        run: |
+          cd DriveLink/ios
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/BydWirelessMirror.app Payload/
+          cp -r build/Release-iphoneos/BydBroadcastExtension.appex Payload/BydWirelessMirror.app/PlugIns/
+          cp -r build/Release-iphoneos/BydLiveActivityExtension.appex Payload/BydWirelessMirror.app/PlugIns/
+          zip -r BydWirelessMirror-Full.ipa Payload/
+      - name: Upload Standard IPA
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ios-standard-${{ github.sha }}
+          path: DriveLink/ios/BydWirelessMirror-Full.ipa
+          retention-days: 90
+
+  ios-free:
+    # Build iOS FreeSideload variant (no extensions) - unsigned for CI
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+      - name: Generate Xcode project (FreeSideload)
+        run: |
+          cd DriveLink/ios
+          xcodegen generate --spec Project-free.yml
+      - name: Build iOS FreeSideload (unsigned)
+        run: |
+          cd DriveLink/ios
+          xcodebuild -project BydWirelessMirrorFree.xcodeproj \
+            -scheme BydWirelessMirror \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+      - name: Package FreeSideload IPA (unsigned)
+        run: |
+          cd DriveLink/ios
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/BydWirelessMirror.app Payload/
+          zip -r BydWirelessMirror-Free.ipa Payload/
+      - name: Upload FreeSideload IPA
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ios-free-${{ github.sha }}
+          path: DriveLink/ios/BydWirelessMirror-Free.ipa
+          retention-days: 90
+
+  ios-combine:
+    # Combine iOS artifacts into single artifact for publish workflow
+    if: github.event_name == 'workflow_dispatch'
+    needs: [ios-standard, ios-free]
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Standard IPA
+        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ios-standard-${{ github.sha }}
+          path: dist/ios
+      - name: Download FreeSideload IPA
+        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ios-free-${{ github.sha }}
+          path: dist/ios
+      - name: Generate IOS SHA256SUMS
+        run: |
+          cd dist/ios
+          sha256sum DriveLink-Full.ipa DriveLink-Free.ipa > IOS_SHA256SUMS.txt
+          cat IOS_SHA256SUMS.txt
+      - name: Upload combined iOS artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: drivelink-ios-release-${{ github.sha }}
+          path: dist/ios/
+          retention-days: 90
+
 # Force refresh
