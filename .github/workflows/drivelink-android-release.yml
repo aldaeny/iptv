@@ -141,17 +141,18 @@ jobs:
         id: signmode
         env:
           PIN: ${{ vars.DRIVELINK_SIGNER_SHA256 }}
+          KEYSTORE_B64: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_BASE64 || '' }}
           KEYSTORE_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEYSTORE_PASSWORD || '' }}
           KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_ALIAS || '' }}
           KEY_PASS: ${{ github.event_name == 'workflow_dispatch' && secrets.DRIVELINK_KEY_PASSWORD || '' }}
         run: |
           set -euo pipefail
           # Report names only; values remain confined to signing steps.
-          for entry in KEYSTORE_PASS:DRIVELINK_KEYSTORE_PASSWORD KEY_ALIAS:DRIVELINK_KEY_ALIAS KEY_PASS:DRIVELINK_KEY_PASSWORD PIN:DRIVELINK_SIGNER_SHA256; do
+          for entry in KEYSTORE_B64:DRIVELINK_KEYSTORE_BASE64 KEYSTORE_PASS:DRIVELINK_KEYSTORE_PASSWORD KEY_ALIAS:DRIVELINK_KEY_ALIAS KEY_PASS:DRIVELINK_KEY_PASSWORD PIN:DRIVELINK_SIGNER_SHA256; do
             key=${entry%:*}; name=${entry#*:}
             if [[ -n ${!key} ]]; then echo "::notice::$name present"; else echo "::notice::BLOCKED $name unavailable"; fi
           done
-          if [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ] || [ -z "$PIN" ]; then
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ] || [ -z "$PIN" ]; then
             echo "::warning::Incomplete signing inputs; diagnostic release APKs will be UNSIGNED and are not publishable."
             echo "DRIVELINK_RELEASE_SIGNABLE=false" >> "$GITHUB_ENV"
             # Unsigned output must never land in the publishable artifact name.
@@ -160,23 +161,11 @@ jobs:
           fi
           umask 077
           KEYSTORE_FILE="$RUNNER_TEMP/drivelink-release.jks"
-          # Generate keystore directly in CI (avoids base64 encoding issues)
-          keytool -genkeypair \
-            -alias "$KEY_ALIAS" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -keystore "$KEYSTORE_FILE" \
-            -storetype PKCS12 \
-            -storepass:env KEYSTORE_PASS \
-            -keypass:env KEY_PASS \
-            -dname "CN=DriveLink, OU=Engineering, O=aldaeny, L=Riyadh, ST=Riyadh, C=SA"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
           test -s "$KEYSTORE_FILE"
           pin=${PIN//:/}; pin=${pin,,}
           [[ $pin =~ ^[0-9a-f]{64}$ ]] || { echo '::error::Invalid trusted Android signer fingerprint'; exit 1; }
           cert=$(keytool -exportcert -keystore "$KEYSTORE_FILE" -storepass:env KEYSTORE_PASS -alias "$KEY_ALIAS" 2>/dev/null | sha256sum | cut -d' ' -f1) || { echo '::error::Cannot open configured keystore and alias'; exit 1; }
-          echo "::notice::Generated cert fingerprint: $cert"
-          echo "::notice::Expected pin: $pin"
           [[ $cert == "$pin" ]] || { echo '::error::Configured key is not the approved release identity'; exit 1; }
           {
             echo "DRIVELINK_KEYSTORE_PATH=$KEYSTORE_FILE"
@@ -186,7 +175,7 @@ jobs:
             echo "DRIVELINK_RELEASE_SIGNABLE=true"
           } >> "$GITHUB_ENV"
           echo "mode=release" >> "$GITHUB_OUTPUT"
-          echo "Release keystore generated in CI."
+          echo "Release keystore configured from repository secrets."
       - name: Re-run source release gate against the exact build commit
         env:
           ANDROID_ONLY_RELEASE: "true"
@@ -360,3 +349,4 @@ jobs:
         run: |
           echo '::warning::Unsigned build — artifacts are diagnostic only, not for distribution.'
           # Allow workflow to complete; publish workflow will gate on signer.
+# Force refresh
