@@ -56,6 +56,6 @@
         <service
             android:name="app.drivelink.cast.service.MirrorForegroundService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|dataSync|microphone" />
+            android:foregroundServiceType="mediaProjection" />
     </application>
 </manifest>
