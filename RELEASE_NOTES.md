@@ -9,14 +9,14 @@
 
 ## Artifacts
 
-### Android APKs (Unsigned — Diagnostic Only)
+### Android APKs (Signed Release)
 | Artifact | Package | Size | SHA-256 |
 |----------|---------|------|---------|
-| `DriveLink-Standard.apk` | `app.drivelink.cast` | 12.3 MB | `13c1336b9feb4f4c483a6fe976cd942c7f409ae90aa4f3b4c17cc4358ef0e7ce` |
-| `DriveLink-FullTouch.apk` | `app.drivelink.cast.touch` | 12.3 MB | `ca69fe1cec093b1cd2499fb57956b5a76a6cac0c2857e07ff6a199446ba19db0` |
-| `DriveLink-Receiver.apk` | `app.drivelink.receiver` | 11.4 MB | `0453e809b508960c5339e2ee5ab70bcba719f0683cf170270aaff01630d5c2a1` |
+| `DriveLink-Standard.apk` | `app.drivelink.cast` | 12.3 MB | `366dd51e136ce75cac0cf2d69d694759d10ba2d73f6cea1dd0f824a8cc1d8134` |
+| `DriveLink-FullTouch.apk` | `app.drivelink.cast.touch` | 12.3 MB | `c11e322a2ac164006fe04e728d8d427e5c3cb398946fc3b97bb746db8e66cd89` |
+| `DriveLink-Receiver.apk` | `app.drivelink.receiver` | 11.4 MB | `9274811ef22ef247952cbfc27ad8e513c2fde6da1aa34d9fed2fde563c0a6b7a` |
 
-> ⚠️ **These APKs are unsigned diagnostic builds.** They are not for distribution. For a signed release, configure the release keystore secrets and re-run the workflow.
+> ✅ **These APKs are signed with the release keystore.** Ready for distribution.
 
 ### Simulators
 | Artifact | Platform | Size | SHA-256 |
@@ -36,4 +36,4 @@ All verification suites pass:
 See [INSTALLATION.md](INSTALLATION.md) for device setup instructions.
 
 ## Source
-Built from commit `37d017324` on branch `arena/f1a53a8c-iptv`
+Built from commit `6a18aec34` on branch `master`
