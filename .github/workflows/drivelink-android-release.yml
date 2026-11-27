@@ -383,9 +383,28 @@ jobs:
         run: |
           cd DriveLink/ios
           mkdir -p Payload
-          cp -r build/Release-iphoneos/BydWirelessMirror.app Payload/
-          cp -r build/Release-iphoneos/BydBroadcastExtension.appex Payload/BydWirelessMirror.app/PlugIns/
-          cp -r build/Release-iphoneos/BydLiveActivityExtension.appex Payload/BydWirelessMirror.app/PlugIns/
+          # Find .app files in derived data directory (modern Xcode uses derived data)
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydWirelessMirror.app" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Could not find BydWirelessMirror.app in derived data"
+            exit 1
+          fi
+          cp -r "$APP_PATH" Payload/
+
+          EXT_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydBroadcastExtension.appex" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
+          if [ -z "$EXT_PATH" ]; then
+            echo "ERROR: Could not find BydBroadcastExtension.appex in derived data"
+            exit 1
+          fi
+          cp -r "$EXT_PATH" Payload/BydWirelessMirror.app/PlugIns/
+
+          EXT_PATH2=$(find ~/Library/Developer/Xcode/DerivedData -name "BydLiveActivityExtension.appex" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
+          if [ -z "$EXT_PATH2" ]; then
+            echo "ERROR: Could not find BydLiveActivityExtension.appex in derived data"
+            exit 1
+          fi
+          cp -r "$EXT_PATH2" Payload/BydWirelessMirror.app/PlugIns/
+
           zip -r BydWirelessMirror-Full.ipa Payload/
       - name: Upload Standard IPA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -427,7 +446,13 @@ jobs:
         run: |
           cd DriveLink/ios
           mkdir -p Payload
-          cp -r build/Release-iphoneos/BydWirelessMirror.app Payload/
+          # Find .app file in derived data directory (modern Xcode uses derived data)
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydWirelessMirror.app" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Could not find BydWirelessMirror.app in derived data"
+            exit 1
+          fi
+          cp -r "$APP_PATH" Payload/
           zip -r BydWirelessMirror-Free.ipa Payload/
       - name: Upload FreeSideload IPA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
