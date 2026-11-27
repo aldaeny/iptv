@@ -175,6 +175,8 @@ jobs:
           pin=${PIN//:/}; pin=${pin,,}
           [[ $pin =~ ^[0-9a-f]{64}$ ]] || { echo '::error::Invalid trusted Android signer fingerprint'; exit 1; }
           cert=$(keytool -exportcert -keystore "$KEYSTORE_FILE" -storepass:env KEYSTORE_PASS -alias "$KEY_ALIAS" 2>/dev/null | sha256sum | cut -d' ' -f1) || { echo '::error::Cannot open configured keystore and alias'; exit 1; }
+          echo "::notice::Generated cert fingerprint: $cert"
+          echo "::notice::Expected pin: $pin"
           [[ $cert == "$pin" ]] || { echo '::error::Configured key is not the approved release identity'; exit 1; }
           {
             echo "DRIVELINK_KEYSTORE_PATH=$KEYSTORE_FILE"
