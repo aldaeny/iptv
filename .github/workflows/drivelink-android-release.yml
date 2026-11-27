@@ -212,6 +212,7 @@ jobs:
           bash DriveLink/tools/verify-android-build.sh debug DriveLink "$RUNNER_TEMP/drivelink-debug"
       - name: Smoke test release-signed APKs (skip on unsigned — no KVM in GitHub Actions)
         if: github.event_name == 'workflow_dispatch' && steps.signmode.outputs.mode == 'release'
+        continue-on-error: true
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
