@@ -339,7 +339,11 @@ def check_android_manifest() -> None:
         if name == "app.drivelink.cast.service.MirrorForegroundService":
             projection = s
             break
+    if projection is not None:
+        for k, v in projection.attrib.items():
+            print(f"DEBUG: attr {k} = {v}")
     fs_type = projection.get(android + "foregroundServiceType", "") if projection else ""
+    print(f"DEBUG: fs_type = '{fs_type}'")
     if projection is None or "mediaProjection" not in fs_type:
         fail("main manifest must declare MirrorForegroundService with mediaProjection")
     missing = required - perms
