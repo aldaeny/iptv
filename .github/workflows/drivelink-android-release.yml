@@ -407,7 +407,7 @@ jobs:
 
           zip -r BydWirelessMirror-Full.ipa Payload/
       - name: Upload Standard IPA
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@v4
         with:
           name: ios-standard-${{ github.sha }}
           path: DriveLink/ios/BydWirelessMirror-Full.ipa
@@ -455,7 +455,7 @@ jobs:
           cp -r "$APP_PATH" Payload/
           zip -r BydWirelessMirror-Free.ipa Payload/
       - name: Upload FreeSideload IPA
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@v4
         with:
           name: ios-free-${{ github.sha }}
           path: DriveLink/ios/BydWirelessMirror-Free.ipa
@@ -469,12 +469,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download Standard IPA
-        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@v4
         with:
           name: ios-standard-${{ github.sha }}
           path: dist/ios
       - name: Download FreeSideload IPA
-        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@v4
         with:
           name: ios-free-${{ github.sha }}
           path: dist/ios
@@ -484,7 +484,7 @@ jobs:
           sha256sum DriveLink-Full.ipa DriveLink-Free.ipa > IOS_SHA256SUMS.txt
           cat IOS_SHA256SUMS.txt
       - name: Upload combined iOS artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@v4
         with:
           name: drivelink-ios-release-${{ github.sha }}
           path: dist/ios/
