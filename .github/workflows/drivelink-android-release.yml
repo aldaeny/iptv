@@ -383,24 +383,33 @@ jobs:
         run: |
           cd DriveLink/ios
           mkdir -p Payload
-          # Find .app files in derived data directory (modern Xcode uses derived data)
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydWirelessMirror.app" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: Could not find BydWirelessMirror.app in derived data"
+          # Get build products directory from xcodebuild
+          BUILT_PRODUCTS_DIR=$(xcodebuild -project BydWirelessMirror.xcodeproj -scheme BydWirelessMirror -configuration Release -showBuildSettings | grep "BUILT_PRODUCTS_DIR" | head -1 | sed 's/.*= //')
+          if [ -z "$BUILT_PRODUCTS_DIR" ]; then
+            echo "ERROR: Could not determine BUILT_PRODUCTS_DIR"
+            exit 1
+          fi
+          echo "Build products directory: $BUILT_PRODUCTS_DIR"
+
+          # Copy main app
+          APP_PATH="$BUILT_PRODUCTS_DIR/BydWirelessMirror.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Could not find BydWirelessMirror.app at $APP_PATH"
             exit 1
           fi
           cp -r "$APP_PATH" Payload/
 
-          EXT_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydBroadcastExtension.appex" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
-          if [ -z "$EXT_PATH" ]; then
-            echo "ERROR: Could not find BydBroadcastExtension.appex in derived data"
+          # Copy extensions
+          EXT_PATH="$BUILT_PRODUCTS_DIR/BydBroadcastExtension.appex"
+          if [ ! -d "$EXT_PATH" ]; then
+            echo "ERROR: Could not find BydBroadcastExtension.appex at $EXT_PATH"
             exit 1
           fi
           cp -r "$EXT_PATH" Payload/BydWirelessMirror.app/PlugIns/
 
-          EXT_PATH2=$(find ~/Library/Developer/Xcode/DerivedData -name "BydLiveActivityExtension.appex" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
-          if [ -z "$EXT_PATH2" ]; then
-            echo "ERROR: Could not find BydLiveActivityExtension.appex in derived data"
+          EXT_PATH2="$BUILT_PRODUCTS_DIR/BydLiveActivityExtension.appex"
+          if [ ! -d "$EXT_PATH2" ]; then
+            echo "ERROR: Could not find BydLiveActivityExtension.appex at $EXT_PATH2"
             exit 1
           fi
           cp -r "$EXT_PATH2" Payload/BydWirelessMirror.app/PlugIns/
@@ -446,10 +455,17 @@ jobs:
         run: |
           cd DriveLink/ios
           mkdir -p Payload
-          # Find .app file in derived data directory (modern Xcode uses derived data)
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "BydWirelessMirror.app" -path "*/Release-iphoneos/*" 2>/dev/null | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: Could not find BydWirelessMirror.app in derived data"
+          # Get build products directory from xcodebuild
+          BUILT_PRODUCTS_DIR=$(xcodebuild -project BydWirelessMirrorFree.xcodeproj -scheme BydWirelessMirror -configuration Release -showBuildSettings | grep "BUILT_PRODUCTS_DIR" | head -1 | sed 's/.*= //')
+          if [ -z "$BUILT_PRODUCTS_DIR" ]; then
+            echo "ERROR: Could not determine BUILT_PRODUCTS_DIR"
+            exit 1
+          fi
+          echo "Build products directory: $BUILT_PRODUCTS_DIR"
+
+          APP_PATH="$BUILT_PRODUCTS_DIR/BydWirelessMirror.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Could not find BydWirelessMirror.app at $APP_PATH"
             exit 1
           fi
           cp -r "$APP_PATH" Payload/
