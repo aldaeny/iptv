@@ -473,7 +473,6 @@ class BydReceiverServer(
                             )
                         }
                     }
-                    }
                     OPCODE_ORIENTATION_CHANGE -> {
                         if (!sessionActive) break
                         isLandscape = payload.firstOrNull() == 0x01.toByte()
